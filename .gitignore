@@ -1,0 +1,23 @@
+# Build directories and executables
+build/
+bin/
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+
+# C++ object and library files
+*.o
+*.a
+*.so
+*.dylib
+
+# OS files
+.DS_Store
+
+# Simulation output directories (VTK and CSV runs)
+output*/
+
+# Python bytecode
+__pycache__/
+*.pyc
