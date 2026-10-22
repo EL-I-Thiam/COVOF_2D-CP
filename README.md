@@ -168,8 +168,8 @@ Les figures suivantes sont générées directement par [`scripts/generate_valida
 
 ```bash
 # 1. Cloner le dépôt
-git clone https://github.com/EL-I-Thiam/covof2d.git
-cd covof2d
+git clone https://github.com/EL-I-Thiam/COVOF_2D-CP.git
+cd COVOF_2D-CP
 
 # 2. Configurer et compiler avec CMake
 cmake -B build -DCMAKE_BUILD_TYPE=Release
