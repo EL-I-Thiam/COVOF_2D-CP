@@ -1,11 +1,11 @@
-# FUGU 2D — Solveur CFD Parallèle Navier-Stokes Incompressible (C++17 / OpenMPI)
+# COVOF 2D — Solveur CFD Parallèle Navier-Stokes Incompressible (C++17 / OpenMPI)
 
 [![Standard C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://en.wikipedia.org/wiki/C%2B%2B17)
 [![OpenMPI](https://img.shields.io/badge/MPI-OpenMPI%204%2B-green.svg)](https://www.open-mpi.org/)
-[![Validation Thétis 2.1.0](https://img.shields.io/badge/Validation%20Th%C3%A9tis%202.1.0-13%2F13%20PASS-brightgreen.svg)](docs/VALIDATION_GUIDE.md)
+[![Validation Référence Académique CFD](https://img.shields.io/badge/Validation%20Th%C3%A9tis%202.1.0-13%2F13%20PASS-brightgreen.svg)](docs/VALIDATION_GUIDE.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**FUGU 2D** est un code de simulation numérique de la mécanique des fluides (CFD) bidimensionnel haute performance développé en **C++17 moderne** avec parallélisme décentralisé par passage de messages **OpenMPI**. Conçu pour résoudre les écoulements laminaires isothermes, convectifs et diphasiques, FUGU 2D met en œuvre les discrétisations spatiales et temporelles de référence documentées dans les thèses de l'Institut de Mécanique et d'Ingénierie de Bordeaux (I2M / Laboratoire TREFLE) et le **Cahier de Validation Thétis 2.1.0**.
+**COVOF 2D** est un code de simulation numérique de la mécanique des fluides (CFD) bidimensionnel haute performance développé en **C++17 moderne** avec parallélisme décentralisé par passage de messages **OpenMPI**. Conçu pour résoudre les écoulements laminaires isothermes, convectifs et diphasiques, COVOF 2D met en œuvre les discrétisations spatiales et temporelles de référence documentées dans les thèses de l'Institut de Mécanique et d'Ingénierie de Bordeaux (I2M / Laboratoire TREFLE) et le **Cahier de Validation et Vérification CFD 2D**.
 
 Le solveur intègre une formulation **Matrix-Free sans allocation dynamique dans la boucle temporelle**, garantissant une empreinte mémoire minimale, un passage à l'échelle optimal sur architectures multicoeurs et grappes de calcul, et une conformité rigoureuse aux solutions analytiques et expérimentales de référence.
 
@@ -15,7 +15,7 @@ Le solveur intègre une formulation **Matrix-Free sans allocation dynamique dans
 
 1. [Fonctionnalités Physiques et Numériques](#-fonctionnalités-physiques-et-numériques)
 2. [Architecture et Conception Logicielle](#-architecture-et-conception-logicielle)
-3. [Synthèse des Validations Thétis 2.1.0 (13/13 PASS)](#-synthèse-des-validations-thétis-210-1313-pass)
+3. [Synthèse des Validations Référence Académique CFD (13/13 PASS)](#-synthèse-des-validations-Référence Académique-210-1313-pass)
 4. [Galerie des Résultats de Validation](#-galerie-des-résultats-de-validation)
 5. [Prérequis et Dépendances](#-prérequis-et-dépendances)
 6. [Compilation et Installation Rapide](#-compilation-et-installation-rapide)
@@ -50,7 +50,7 @@ Le solveur intègre une formulation **Matrix-Free sans allocation dynamique dans
   * Les scalaires (pression $p$, température $T$, fraction volumique $C$) sont situés aux centres des mailles $(i, j)$.
   * Élimination intrinsèque de tout mode en damier (*checkerboard modes*) sans stabilisation artificielle.
 * **Schémas Visqueux et Convectifs** :
-  * Diffusion visqueuse conservative d'ordre 2 à tenseur complet (Caltagirone et al. - Annexe A Thétis).
+  * Diffusion visqueuse conservative d'ordre 2 à tenseur complet (Caltagirone et al. - Annexe A Référence Académique).
   * Convection semi-implicite à centrage d'ordre 2 ou décentré TVD limiteur de flux.
 * **Intégration Temporelle** :
   * Schéma d'Euler implicite d'ordre 1 ou Crank-Nicolson d'ordre 2.
@@ -99,11 +99,11 @@ Le code C++17 adopte une programmation orientée objet modulaire stricte garanti
 
 ---
 
-## 📊 Synthèse des Validations Thétis 2.1.0 (13/13 PASS)
+## 📊 Synthèse des Validations Référence Académique CFD (13/13 PASS)
 
 Toutes les simulations de validation sont strictement exécutées en parallèle avec OpenMPI et vérifiées par la suite automatisée [`scripts/verify_cases.py`](scripts/verify_cases.py) :
 
-| Chapitre Thétis | Cas Test | Configuration Physique & Maillage | Métrique Analysée | Cible de Référence Thétis 2.1.0 | Résultat Numérique FUGU 2D | Écart / Erreur | Statut |
+| Chapitre Référence Académique | Cas Test | Configuration Physique & Maillage | Métrique Analysée | Cible de Référence Référence Académique CFD | Résultat Numérique COVOF 2D | Écart / Erreur | Statut |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :---: |
 | **Chap 3 - Exact** | **Cas 3.1** | Laplacien cartésien $\Delta \Psi = 1$ ($64 \times 32$) | Erreur $L_1$ analytique | $5.60 \times 10^{-6}$ (Ordre 2.0) | $5.60 \times 10^{-6}$ | **0.00 %** | **PASS** |
 | **Chap 3 - Exact** | **Cas 3.7** | Poiseuille plan stationnaire ($Re=100$, $16 \times 64$) | Vitesse maximale axiale | $1.2500\text{ m/s}$ | $1.2500\text{ m/s}$ | **0.00 %** | **PASS** |
@@ -123,7 +123,7 @@ Toutes les simulations de validation sont strictement exécutées en parallèle 
 
 ## 🖼 Galerie des Résultats de Validation
 
-Les figures suivantes sont générées directement par [`scripts/generate_thetis_validation_figures.py`](scripts/generate_thetis_validation_figures.py) à partir des résultats numériques :
+Les figures suivantes sont générées directement par [`scripts/generate_validation_figures.py`](scripts/generate_validation_figures.py) à partir des résultats numériques :
 
 | Cas 3.8 : Szymanski Instationnaire (Fourier) | Cas 3.9 : Poiseuille à Viscosité Variable |
 | :---: | :---: |
@@ -168,15 +168,15 @@ Les figures suivantes sont générées directement par [`scripts/generate_thetis
 
 ```bash
 # 1. Cloner le dépôt
-git clone https://github.com/EL-I-Thiam/fugu2d.git
-cd fugu2d
+git clone https://github.com/EL-I-Thiam/covof2d.git
+cd covof2d
 
 # 2. Configurer et compiler avec CMake
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j4
 
 # 3. Vérifier que l'exécutable est produit dans bin/
-ls -lh bin/fugu2d
+ls -lh bin/covof2d
 ```
 
 ---
@@ -187,13 +187,13 @@ ls -lh bin/fugu2d
 Pour exécuter un cas test avec $N$ processus MPI :
 ```bash
 # Cavité entraînée Re=1000 sur 4 coeurs
-mpirun -np 4 bin/fugu2d cases/cavity_re1000.json
+mpirun -np 4 bin/covof2d cases/cavity_re1000.json
 
 # Écoulement autour d'un cylindre Re=20 sur 2 coeurs
-mpirun -np 2 bin/fugu2d cases/obstacle_cylinder_re20.json
+mpirun -np 2 bin/covof2d cases/obstacle_cylinder_re20.json
 
 # Rupture de barrage diphasique VOF sur 4 coeurs
-mpirun -np 4 bin/fugu2d cases/dam_break.json
+mpirun -np 4 bin/covof2d cases/dam_break.json
 ```
 
 ### 2. Exécuter l'ensemble de la suite de validation (13 cas)
@@ -208,7 +208,7 @@ Le script automatisé [`scripts/run_all_benchmarks.sh`](scripts/run_all_benchmar
 python3 scripts/verify_cases.py
 
 # Tracé des 14 figures comparatives haute résolution dans docs/figures/
-python3 scripts/generate_thetis_validation_figures.py
+python3 scripts/generate_validation_figures.py
 ```
 
 ---
@@ -216,12 +216,12 @@ python3 scripts/generate_thetis_validation_figures.py
 ## 📁 Structure du Dépôt
 
 ```
-fugu2d/
+covof2d/
 ├── CMakeLists.txt                # Configuration de compilation CMake C++17 / MPI
-├── TUTORIAL.md                   # Tutoriel exhaustif pas à pas pour FUGU 2D
+├── TUTORIAL.md                   # Tutoriel exhaustif pas à pas pour COVOF 2D
 ├── validation_summary.csv        # Données tabulées des 13 benchmarks de validation
 ├── validation_summary.md         # Synthèse Markdown des métriques CFD
-├── bin/                          # Exécutable binaire fugu2d
+├── bin/                          # Exécutable binaire covof2d
 ├── include/fugu/                 # En-têtes C++
 │   ├── Config.hpp                # Parseur JSON et structures de configuration
 │   ├── Mesh.hpp                  # Topologie cartésienne et décomposition 2D
@@ -251,12 +251,12 @@ fugu2d/
 │   ├── USER_GUIDE.md             # Manuel de référence utilisateur
 │   ├── DEVELOPER_GUIDE.md        # Guide d'architecture et extension développeur
 │   ├── MATHEMATICAL_THEORY.md    # Formulations théoriques et discrétisation
-│   ├── VALIDATION_GUIDE.md       # Cahier de vérification conforme Thétis 2.1.0
+│   ├── VALIDATION_GUIDE.md       # Cahier de vérification conforme Référence Académique CFD
 │   └── figures/                  # 14 figures de validation haute définition (PNG)
 └── scripts/                      # Scripts d'automatisation Python et Bash
     ├── run_all_benchmarks.sh     # Lanceur global de tous les cas de calcul
     ├── verify_cases.py           # Analyseur de convergence et métriques d'erreur
-    └── generate_thetis_validation_figures.py # Générateur des figures comparatives
+    └── generate_validation_figures.py # Générateur des figures comparatives
 ```
 
 ---
@@ -269,12 +269,12 @@ Pour approfondir l'utilisation et le développement du code, consultez les manue
 * [**Manuel Utilisateur (`docs/USER_GUIDE.md`)**](docs/USER_GUIDE.md) : syntaxe exhaustive des blocs JSON, gestion des pas de temps, critères de convergence.
 * [**Guide Développeur (`docs/DEVELOPER_GUIDE.md`)**](docs/DEVELOPER_GUIDE.md) : conventions de style, création d'un nouveau préconditionneur, ajout d'une équation scalaire.
 * [**Documentation Théorique (`docs/MATHEMATICAL_THEORY.md`)**](docs/MATHEMATICAL_THEORY.md) : dérivation mathématique des équations de Navier-Stokes, tenseur des contraintes visqueuses, méthode CSF et schéma VOF-TVD Superbee.
-* [**Cahier de Validation (`docs/VALIDATION_GUIDE.md`)**](docs/VALIDATION_GUIDE.md) : fiches de synthèse pour les 13 cas tests du Cahier de Validation Thétis 2.1.0.
+* [**Cahier de Validation (`docs/VALIDATION_GUIDE.md`)**](docs/VALIDATION_GUIDE.md) : fiches de synthèse pour les 13 cas tests du Cahier de Validation et Vérification CFD 2D.
 
 ---
 
 ## 👥 Auteurs et Licence
 
 * **Auteur & Développeur** : Elhadji Ibrahima Thiam
-* **Laboratoire d'Inspiration** : I2M / Laboratoire TREFLE (Bordeaux) — Projet Thétis
+* **Laboratoire d'Inspiration** : I2M / Laboratoire TREFLE (Bordeaux) — Projet Référence Académique
 * **Licence** : Ce projet est distribué sous licence open-source MIT.

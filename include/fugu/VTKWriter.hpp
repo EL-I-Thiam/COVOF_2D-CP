@@ -12,10 +12,13 @@ namespace fugu {
  */
 class VTKWriter {
 public:
+    // Déclaration de variable typée
     std::string output_dir = "output";
+    // Déclaration de variable typée
     std::string case_name  = "fugu";
     std::ofstream csv_file;
 
+    // Calcul et assignation numérique
     VTKWriter() = default;
 
     /**
@@ -34,6 +37,7 @@ public:
     void write_diagnostics(const Mesh2D& mesh, const FlowFields& fields, int step, double time, double dt);
 
     void finalize() {
+        // Évaluation de la condition de contrôle
         if (csv_file.is_open()) csv_file.close();
     }
 };

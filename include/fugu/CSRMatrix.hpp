@@ -11,20 +11,29 @@ namespace fugu {
  */
 class CSRMatrix {
 public:
+    // Déclaration de variable typée
     int nrows = 0;
+    // Déclaration de variable typée
     int ncols = 0;
+    // Déclaration de variable typée
     std::vector<int> row_ptr;     ///< Pointeurs de début de ligne (taille nrows + 1)
+    // Déclaration de variable typée
     std::vector<int> col_idx;     ///< Indices de colonnes
+    // Déclaration de variable typée
     std::vector<double> values;   ///< Valeurs non nulles
+    // Déclaration de variable typée
     std::vector<double> diag;     ///< Diagonale explicite pour le préconditionnement Jacobi / Gauss-Seidel
 
+    // Calcul et assignation numérique
     CSRMatrix() = default;
 
     /**
      * @brief Initialise les dimensions
      */
     void init(int r, int c) {
+        // Calcul et assignation numérique
         nrows = r;
+        // Calcul et assignation numérique
         ncols = c;
         row_ptr.assign(r + 1, 0);
         col_idx.clear();

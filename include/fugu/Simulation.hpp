@@ -25,6 +25,7 @@ public:
     std::unique_ptr<LinearSolverBase> linear_solver;
     VTKWriter vtk_writer;
 
+    // Calcul et assignation numérique
     Simulation() = default;
 
     /**
@@ -38,12 +39,12 @@ public:
     void run();
 
     /**
-     * @brief Résout le problème de vérification du Laplacien analytique (Cas 3.1 Thétis)
+     * @brief Résout le problème de vérification du Laplacien analytique (Cas 3.1 Référence Académique)
      */
     void run_laplacian();
 
     /**
-     * @brief Résout le problème d'advection d'une tâche dans un vortex avec cisaillement (Cas 3.19 Thétis)
+     * @brief Résout le problème d'advection d'une tâche dans un vortex avec cisaillement (Cas 3.19 Référence Académique)
      */
     void run_vortex_advection();
 

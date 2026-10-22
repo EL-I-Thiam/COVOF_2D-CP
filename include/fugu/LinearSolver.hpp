@@ -12,10 +12,11 @@ class NavierStokesSolver;
 class FlowFields;
 
 /**
- * @brief Interface de base abstraite pour tous les solveurs linéaires (Standards Thétis / FUGU 2D)
+ * @brief Interface de base abstraite pour tous les solveurs linéaires (standards CFD / FUGU 2D)
  */
 class LinearSolverBase {
 public:
+    // Calcul et assignation numérique
     virtual ~LinearSolverBase() = default;
 
     /**
@@ -29,6 +30,7 @@ public:
      */
     virtual int solve(const NavierStokesSolver& op, const PreconditionerBase& P,
                       const FlowFields& fields_old, double dt,
+                      // Calcul et assignation numérique
                       const std::vector<double>& b, std::vector<double>& x) const = 0;
 
     /**
@@ -43,14 +45,19 @@ public:
  */
 class BiCGSTAB2Solver : public LinearSolverBase {
 public:
+    // Déclaration de variable typée
     double tol = 1.0e-6;
+    // Déclaration de variable typée
     int max_iter = 500;
+    // Déclaration de variable typée
     bool use_precond = true;
 
     void init(const SolverOptions& config) override;
+    // Déclaration de variable typée
     int solve(const NavierStokesSolver& op, const PreconditionerBase& P,
               const FlowFields& fields_old, double dt,
               const std::vector<double>& b, std::vector<double>& x) const override;
+    // Déclaration de variable typée
     std::string get_name() const override { return "BICGSTAB2"; }
 };
 
@@ -60,14 +67,19 @@ public:
  */
 class BiCGSTABSolver : public LinearSolverBase {
 public:
+    // Déclaration de variable typée
     double tol = 1.0e-6;
+    // Déclaration de variable typée
     int max_iter = 500;
+    // Déclaration de variable typée
     bool use_precond = true;
 
     void init(const SolverOptions& config) override;
+    // Déclaration de variable typée
     int solve(const NavierStokesSolver& op, const PreconditionerBase& P,
               const FlowFields& fields_old, double dt,
               const std::vector<double>& b, std::vector<double>& x) const override;
+    // Déclaration de variable typée
     std::string get_name() const override { return "BICGSTAB"; }
 };
 
@@ -77,14 +89,19 @@ public:
  */
 class CGSolver : public LinearSolverBase {
 public:
+    // Déclaration de variable typée
     double tol = 1.0e-6;
+    // Déclaration de variable typée
     int max_iter = 500;
+    // Déclaration de variable typée
     bool use_precond = true;
 
     void init(const SolverOptions& config) override;
+    // Déclaration de variable typée
     int solve(const NavierStokesSolver& op, const PreconditionerBase& P,
               const FlowFields& fields_old, double dt,
               const std::vector<double>& b, std::vector<double>& x) const override;
+    // Déclaration de variable typée
     std::string get_name() const override { return "CG"; }
 };
 
@@ -94,15 +111,21 @@ public:
  */
 class GMRESSolver : public LinearSolverBase {
 public:
+    // Déclaration de variable typée
     double tol = 1.0e-6;
+    // Déclaration de variable typée
     int max_iter = 500;
+    // Déclaration de variable typée
     int restart = 30; // Dimension du sous-espace de Krylov
+    // Déclaration de variable typée
     bool use_precond = true;
 
     void init(const SolverOptions& config) override;
+    // Déclaration de variable typée
     int solve(const NavierStokesSolver& op, const PreconditionerBase& P,
               const FlowFields& fields_old, double dt,
               const std::vector<double>& b, std::vector<double>& x) const override;
+    // Déclaration de variable typée
     std::string get_name() const override { return "GMRES"; }
 };
 
@@ -112,14 +135,19 @@ public:
  */
 class MINRESSolver : public LinearSolverBase {
 public:
+    // Déclaration de variable typée
     double tol = 1.0e-6;
+    // Déclaration de variable typée
     int max_iter = 500;
+    // Déclaration de variable typée
     bool use_precond = true;
 
     void init(const SolverOptions& config) override;
+    // Déclaration de variable typée
     int solve(const NavierStokesSolver& op, const PreconditionerBase& P,
               const FlowFields& fields_old, double dt,
               const std::vector<double>& b, std::vector<double>& x) const override;
+    // Déclaration de variable typée
     std::string get_name() const override { return "MINRES"; }
 };
 
@@ -129,13 +157,17 @@ public:
  */
 class DirectSolver : public LinearSolverBase {
 public:
+    // Déclaration de variable typée
     double tol = 1.0e-12;
+    // Déclaration de variable typée
     int max_iter = 1;
 
     void init(const SolverOptions& config) override;
+    // Déclaration de variable typée
     int solve(const NavierStokesSolver& op, const PreconditionerBase& P,
               const FlowFields& fields_old, double dt,
               const std::vector<double>& b, std::vector<double>& x) const override;
+    // Déclaration de variable typée
     std::string get_name() const override { return "DIRECT"; }
 };
 
@@ -145,9 +177,11 @@ public:
 class MumpsSolverBridge : public LinearSolverBase {
 public:
     void init(const SolverOptions& config) override;
+    // Déclaration de variable typée
     int solve(const NavierStokesSolver& op, const PreconditionerBase& P,
               const FlowFields& fields_old, double dt,
               const std::vector<double>& b, std::vector<double>& x) const override;
+    // Déclaration de variable typée
     std::string get_name() const override { return "MUMPS"; }
 };
 
@@ -156,13 +190,17 @@ public:
  */
 class PetscSolverBridge : public LinearSolverBase {
 public:
+    // Déclaration de variable typée
     std::string ksp_type = "bcgs";
+    // Déclaration de variable typée
     std::string pc_type  = "bjacobi";
 
     void init(const SolverOptions& config) override;
+    // Déclaration de variable typée
     int solve(const NavierStokesSolver& op, const PreconditionerBase& P,
               const FlowFields& fields_old, double dt,
               const std::vector<double>& b, std::vector<double>& x) const override;
+    // Déclaration de variable typée
     std::string get_name() const override { return "PETSC"; }
 };
 
@@ -172,14 +210,16 @@ public:
 class HypreSolverBridge : public LinearSolverBase {
 public:
     void init(const SolverOptions& config) override;
+    // Déclaration de variable typée
     int solve(const NavierStokesSolver& op, const PreconditionerBase& P,
               const FlowFields& fields_old, double dt,
               const std::vector<double>& b, std::vector<double>& x) const override;
+    // Déclaration de variable typée
     std::string get_name() const override { return "HYPRE"; }
 };
 
 /**
- * @brief Fabrique de Solveurs Linéaires (Factory Pattern Thétis / FUGU 2D)
+ * @brief Fabrique de Solveurs Linéaires (Factory Pattern Référence Académique / FUGU 2D)
  */
 class SolverFactory {
 public:

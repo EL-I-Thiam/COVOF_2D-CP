@@ -12,11 +12,12 @@ class NavierStokesSolver;
 class FlowFields;
 
 /**
- * @brief Classe de base abstraite pour tous les préconditionneurs (Standard Thétis / FUGU 2D)
+ * @brief Classe de base abstraite pour tous les préconditionneurs (Standard CFD / FUGU 2D)
  * Permet l'extension et la création facile de nouveaux préconditionneurs par héritage.
  */
 class PreconditionerBase {
 public:
+    // Calcul et assignation numérique
     virtual ~PreconditionerBase() = default;
 
     /**
@@ -47,11 +48,13 @@ public:
  */
 class JacobiPreconditioner : public PreconditionerBase {
 public:
+    // Calcul et assignation numérique
     const NavierStokesSolver* ns_solver = nullptr;
 
     void init(const NavierStokesSolver* solver) override;
     void update(const FlowFields& fields, double dt) override;
     void apply(const std::vector<double>& z, std::vector<double>& r) const override;
+    // Déclaration de variable typée
     std::string get_name() const override { return "JACOBI"; }
 };
 
@@ -61,12 +64,15 @@ public:
  */
 class SSORPreconditioner : public PreconditionerBase {
 public:
+    // Calcul et assignation numérique
     const NavierStokesSolver* ns_solver = nullptr;
+    // Déclaration de variable typée
     double omega = 1.0; // Facteur de relaxation (defaut Gauss-Seidel symetrique)
 
     void init(const NavierStokesSolver* solver) override;
     void update(const FlowFields& fields, double dt) override;
     void apply(const std::vector<double>& z, std::vector<double>& r) const override;
+    // Déclaration de variable typée
     std::string get_name() const override { return "SSOR"; }
 };
 
@@ -76,12 +82,15 @@ public:
  */
 class ILU0Preconditioner : public PreconditionerBase {
 public:
+    // Calcul et assignation numérique
     const NavierStokesSolver* ns_solver = nullptr;
+    // Déclaration de variable typée
     std::vector<double> ilu_diag;
 
     void init(const NavierStokesSolver* solver) override;
     void update(const FlowFields& fields, double dt) override;
     void apply(const std::vector<double>& z, std::vector<double>& r) const override;
+    // Déclaration de variable typée
     std::string get_name() const override { return "ILU0"; }
 };
 
@@ -91,11 +100,13 @@ public:
  */
 class BlockTriangularPreconditioner : public PreconditionerBase {
 public:
+    // Calcul et assignation numérique
     const NavierStokesSolver* ns_solver = nullptr;
 
     void init(const NavierStokesSolver* solver) override;
     void update(const FlowFields& fields, double dt) override;
     void apply(const std::vector<double>& z, std::vector<double>& r) const override;
+    // Déclaration de variable typée
     std::string get_name() const override { return "BLOCK_TRIANGULAR"; }
 };
 
@@ -105,17 +116,23 @@ public:
  */
 class CustomPreconditioner : public PreconditionerBase {
 public:
+    // Calcul et assignation numérique
     using ApplyFunc = std::function<void(const std::vector<double>&, std::vector<double>&)>;
     ApplyFunc custom_apply;
+    // Déclaration de variable typée
     std::string custom_name = "CUSTOM";
 
     void init(const NavierStokesSolver* solver) override;
     void update(const FlowFields& fields, double dt) override;
     void apply(const std::vector<double>& z, std::vector<double>& r) const override;
+    // Déclaration de variable typée
     std::string get_name() const override { return custom_name; }
 
+    // Calcul et assignation numérique
     void set_custom_operator(ApplyFunc func, const std::string& name = "USER_DEFINED") {
+        // Calcul et assignation numérique
         custom_apply = func;
+        // Calcul et assignation numérique
         custom_name = name;
     }
 };

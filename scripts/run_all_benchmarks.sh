@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Script d'exécution automatisée des cas tests FUGU 2D en parallèle avec OpenMPI
-# Couvre TOUS les cas des Chapitres 3, 4, 6 et 7 du Cahier de Validation Thétis 2.1.0
+# Couvre TOUS les cas des Chapitres 3, 4, 6 et 7 du Cahier de Validation et Vérification CFD 2D
 # ==============================================================================
 
 set -e
@@ -114,17 +114,17 @@ if [ -f "cases/rayleigh_taylor.json" ]; then
 fi
 
 # ==============================================================================
-# RAPPORT STATISTIQUE ET PRODUCTION DES FIGURES DE VALIDATION THETIS
+# RAPPORT STATISTIQUE ET PRODUCTION DES FIGURES DE validation de référence
 # ==============================================================================
 echo "=============================================================================="
-echo "   ANALYSE STATISTIQUE ET RAPPORT DE CONFORMITE THETIS 2.1.0                  "
+echo "   ANALYSE STATISTIQUE ET RAPPORT DE CONFORMITE Référence Académique CFD                  "
 echo "=============================================================================="
 /opt/anaconda3/bin/python3 scripts/verify_cases.py
 
 echo "=============================================================================="
 echo "   PRODUCTION DES FIGURES HAUTE DEFINITION (docs/figures/)                    "
 echo "=============================================================================="
-/opt/anaconda3/bin/python3 scripts/generate_thetis_validation_figures.py
+/opt/anaconda3/bin/python3 scripts/generate_validation_figures.py
 
 echo "=============================================================================="
 echo "          SUITE DE BENCHMARKS FUGU 2D ENTIEREMENT VALIDEE (100% PASS) !       "

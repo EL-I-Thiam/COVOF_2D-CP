@@ -1,6 +1,6 @@
-# Tutoriel Pratique Exhaustif FUGU 2D (C++17 / OpenMPI)
+# Tutoriel Pratique Exhaustif COVOF 2D (C++17 / OpenMPI)
 
-Ce document constitue le **guide d'apprentissage complet pas à pas** pour maîtriser l'utilisation, la configuration, l'exécution et l'analyse de simulations numériques avec le solveur CFD **FUGU 2D**. 
+Ce document constitue le **guide d'apprentissage complet pas à pas** pour maîtriser l'utilisation, la configuration, l'exécution et l'analyse de simulations numériques avec le solveur CFD **COVOF 2D**. 
 
 ---
 
@@ -26,7 +26,7 @@ Ce document constitue le **guide d'apprentissage complet pas à pas** pour maît
 
 ### 1.1. Pourquoi la grille décalée (Staggered MAC Grid) ?
 Dans les méthodes traditionnelles à variables colocalisées (où vitesses et pressions sont aux mêmes nœuds), la discrétisation par différences finies centrées d'ordre 2 conduit au phénomène bien connu de **découplage pair-impair** (modes en damier ou *checkerboard modes*).
-Pour éliminer ce problème sans introduire de dissipation artificielle (comme la projection de Rhie-Chow), FUGU 2D utilise la grille de Harlow & Welch (1965) :
+Pour éliminer ce problème sans introduire de dissipation artificielle (comme la projection de Rhie-Chow), COVOF 2D utilise la grille de Harlow & Welch (1965) :
 
 ```
                   v(i, j+1/2)
@@ -66,7 +66,7 @@ cmake --version
 ```
 
 ### 2.2. Compilation
-Depuis la racine du dépôt `fugu2d` :
+Depuis la racine du dépôt `covof2d` :
 ```bash
 # Configuration hors-source dans build/
 cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -74,7 +74,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 # Compilation parallèle sur 4 cœurs
 cmake --build build -j4
 ```
-L'exécutable généré est produit dans `bin/fugu2d`.
+L'exécutable généré est produit dans `bin/covof2d`.
 
 ---
 
@@ -157,7 +157,7 @@ Ce cas teste l'établissement transitoire d'un profil parabolique de Poiseuille 
 
 ### 4.2. Lancement
 ```bash
-mpirun -np 2 bin/fugu2d cases/poiseuille_unsteady.json
+mpirun -np 2 bin/covof2d cases/poiseuille_unsteady.json
 ```
 
 ### 4.3. Solution Analytique (Série de Szymanski)
@@ -165,7 +165,7 @@ La solution transitoire exacte s'exprime par la décomposition de Fourier :
 $$u(z, t) = \frac{G e^2}{2\mu} \left( 1 - \frac{z^2}{e^2} \right) + \sum_{n=0}^{\infty} a_n \exp\left( - \frac{(2n+1)^2 \pi^2 \mu}{4 \rho e^2} t \right) \cos\left( \frac{(2n+1) \pi z}{2e} \right)$$
 avec $a_n = -\frac{16 G e^2 (-1)^n}{\mu \pi^3 (2n+1)^3}$ et $z = y - e \in [-e, e]$.
 
-À $t = 1.0\text{ s}$, la solution FUGU 2D converge à $u_{\max} = 0.017343\text{ m/s}$ avec une erreur $L_1 = 1.49 \times 10^{-5}\text{ m/s}$, surpassant la cible de référence Thétis ($3.13 \times 10^{-4}\text{ m/s}$).
+À $t = 1.0\text{ s}$, la solution COVOF 2D converge à $u_{\max} = 0.017343\text{ m/s}$ avec une erreur $L_1 = 1.49 \times 10^{-5}\text{ m/s}$, surpassant la cible de référence Référence Académique ($3.13 \times 10^{-4}\text{ m/s}$).
 
 ---
 
@@ -193,7 +193,7 @@ Le benchmark de Ghia et al. (1982) est le problème classique pour tester la pr�
 
 ### 5.2. Lancement
 ```bash
-mpirun -np 4 bin/fugu2d cases/cavity_re1000.json
+mpirun -np 4 bin/covof2d cases/cavity_re1000.json
 ```
 
 ### 5.3. Résultats attendus
@@ -221,9 +221,9 @@ L'expérience d'Armaly et al. (1983) étudie le décollement de couche limite et
 
 ### 6.2. Lancement et Analyse
 ```bash
-mpirun -np 4 bin/fugu2d cases/backward_facing_step.json
+mpirun -np 4 bin/covof2d cases/backward_facing_step.json
 ```
-La longueur de recollement mesurée est $x_r / H = 2.719$, en accord direct avec la valeur expérimentale et numérique de Thétis ($x_r / H = 2.808$, écart $< 3.2\%$).
+La longueur de recollement mesurée est $x_r / H = 2.719$, en accord direct avec la valeur expérimentale et numérique de Référence Académique ($x_r / H = 2.808$, écart $< 3.2\%$).
 
 ---
 
@@ -239,7 +239,7 @@ $$\mathbf{f}_{\text{boussinesq}} = \rho \mathbf{g} \beta (T - T_0)$$
 * $Ra = \frac{\rho g \beta \Delta T L^3}{\mu \alpha} = 10^4$, $Pr = 0.71$.
 * Calcul du nombre de Nusselt moyen à la paroi chaude :
   $$\overline{Nu} = \frac{1}{L_y} \int_0^{L_y} \left( -\frac{\partial T}{\partial x} \right)_{x=0} dy$$
-* **Résultat FUGU 2D** : $\overline{Nu} = 2.7261$ (conforme à la plage benchmark $[2.2, 2.8]$).
+* **Résultat COVOF 2D** : $\overline{Nu} = 2.7261$ (conforme à la plage benchmark $[2.2, 2.8]$).
 
 ---
 
@@ -265,7 +265,7 @@ L'effondrement gravitationnel d'une colonne d'eau (Martin & Moyce) met à l'épr
 
 ### 8.2. Lancement
 ```bash
-mpirun -np 4 bin/fugu2d cases/dam_break.json
+mpirun -np 4 bin/covof2d cases/dam_break.json
 ```
 Le front d'onde atteint une vitesse maximale de $2.01\text{ m/s}$, caractéristique du régime d'impact visqueux.
 
@@ -283,9 +283,9 @@ $$\Delta P_{\text{théorique}} = \frac{1.0}{0.25} = 4.000\text{ Pa}$$
 
 ### 9.2. Lancement et Validation
 ```bash
-mpirun -np 2 bin/fugu2d cases/static_droplet.json
+mpirun -np 2 bin/covof2d cases/static_droplet.json
 ```
-La pression interne moyenne calculée par FUGU 2D donne $\Delta P = 3.86\text{ Pa}$ (erreur relative de $3.38\%$), confirmant l'absence de courants parasites excessifs.
+La pression interne moyenne calculée par COVOF 2D donne $\Delta P = 3.86\text{ Pa}$ (erreur relative de $3.38\%$), confirmant l'absence de courants parasites excessifs.
 
 ---
 
@@ -304,7 +304,7 @@ Ce tutoriel illustre le calcul d'un écoulement laminaire à $Re=20$ autour d'un
 ```
 ### 10.2. Lancement
 ```bash
-mpirun -np 2 bin/fugu2d cases/obstacle_cylinder_re20.json
+mpirun -np 2 bin/covof2d cases/obstacle_cylinder_re20.json
 ```
 Deux tourbillons symétriques stationnaires se développent en aval du cylindre avec une longueur de recirculation $L/D \approx 0.55-0.77$.
 
@@ -312,7 +312,7 @@ Deux tourbillons symétriques stationnaires se développent en aval du cylindre 
 
 ## 11. Post-Traitement Avancé avec ParaView
 
-FUGU 2D exporte ses données au format rectilinéaire partitionné VTK :
+COVOF 2D exporte ses données au format rectilinéaire partitionné VTK :
 * Fichier maître multi-processus : `output_cas/cas_XXXXXX.pvtr`
 * Fichiers de sous-domaines locaux : `output_cas/cas_p0_XXXXXX.vtr`, `cas_p1_XXXXXX.vtr`
 
@@ -334,7 +334,7 @@ FUGU 2D exporte ses données au format rectilinéaire partitionné VTK :
 
 ## 12. Automatisation Python et Études de Convergence
 
-Pour analyser l'ordre de convergence d'un schéma spatial, FUGU 2D fournit le script [`scripts/verify_cases.py`](scripts/verify_cases.py). Vous pouvez écrire un script simple pour balayer plusieurs résolutions :
+Pour analyser l'ordre de convergence d'un schéma spatial, COVOF 2D fournit le script [`scripts/verify_cases.py`](scripts/verify_cases.py). Vous pouvez écrire un script simple pour balayer plusieurs résolutions :
 
 ```python
 import subprocess
@@ -353,7 +353,7 @@ for N in grids:
     with open("cases/tmp_case.json", "w") as f:
         json.dump(cfg, f)
         
-    subprocess.run(["mpirun", "-np", "4", "bin/fugu2d", "cases/tmp_case.json"])
+    subprocess.run(["mpirun", "-np", "4", "bin/covof2d", "cases/tmp_case.json"])
     # Calcul de l'erreur L1 par rapport à la solution exacte...
 ```
 
@@ -375,6 +375,6 @@ Pour modéliser un nouveau problème CFD :
 5. **Régler le solveur** : pour la plupart des cas laminaires, `r_al: 100.0`, `uzawa_iter: 1`, `tol: 1.0e-7`, solveur `BICGSTAB2`.
 6. **Lancer et visualiser** :
    ```bash
-   mpirun -np 4 bin/fugu2d cases/mon_nouveau_cas.json
+   mpirun -np 4 bin/covof2d cases/mon_nouveau_cas.json
    paraview output_mon_nouveau_cas/mon_nouveau_cas_..pvtr
    ```

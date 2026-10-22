@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(FUGU_2D_MPI CXX)
+project(COVOF_2D_CPP CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -30,11 +30,18 @@ set(SOURCES
     src/main.cpp
 )
 
-# Executable target
-add_executable(fugu2d ${SOURCES})
-target_link_libraries(fugu2d PRIVATE MPI::MPI_CXX)
+# Executable target: covof2d
+add_executable(covof2d ${SOURCES})
+target_link_libraries(covof2d PRIVATE MPI::MPI_CXX)
 
-# Set runtime output directory
-set_target_properties(fugu2d PROPERTIES
+set_target_properties(covof2d PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin"
+)
+
+# Create compatibility symlink/target for fugu2d
+add_custom_command(TARGET covof2d POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E create_symlink
+        ${CMAKE_CURRENT_SOURCE_DIR}/bin/covof2d
+        ${CMAKE_CURRENT_SOURCE_DIR}/bin/fugu2d
+    COMMENT "Creating compatibility symlink bin/fugu2d -> bin/covof2d"
 )
