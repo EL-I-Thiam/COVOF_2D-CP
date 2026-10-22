@@ -185,7 +185,7 @@ void Simulation::run() {
 
     // Évaluation de la condition de contrôle
     if (mesh.rank == 0) {
-        std::cout << "\n>>> DEMARRAGE DU CALCUL FUGU 2D PARALLELE <<<\n"
+        std::cout << "\n>>> DEMARRAGE DU CALCUL COVOF 2D PARALLELE <<<\n"
                   << std::left << std::setw(8)  << "Pas"
                   << std::setw(14) << "Temps [s]"
                   << std::setw(12) << "dt [s]"
@@ -359,7 +359,7 @@ void Simulation::run() {
     if (mesh.rank == 0) {
         std::cout << std::string(78, '-') << "\n"
                   // Calcul et assignation numérique
-                  << ">>> SIMULATION FUGU 2D TERMINEE AVEC SUCCES A t = " << t << " s <<<\n"
+                  << ">>> SIMULATION COVOF 2D TERMINEE AVEC SUCCES A t = " << t << " s <<<\n"
                   << "Fichiers de visualisation VTK et CSV disponibles dans : " << config.output.output_dir << "\n";
     }
 }
@@ -600,7 +600,7 @@ void Simulation::run_laplacian() {
 
     // Évaluation de la condition de contrôle
     if (mesh.rank == 0) {
-        std::cout << ">>> RESULTAT RESOLUTION LAPLACIEN FUGU 2D <<<\n"
+        std::cout << ">>> RESULTAT RESOLUTION LAPLACIEN COVOF 2D <<<\n"
                   << "  Iterations : " << iters << "\n"
                   << "  Erreur L1   : " << std::scientific << std::setprecision(5) << err_l1 << "\n"
                   << "  Erreur L2   : " << std::scientific << std::setprecision(5) << err_l2 << "\n"
@@ -745,7 +745,7 @@ void Simulation::run_vortex_advection() {
 
     // Évaluation de la condition de contrôle
     if (mesh.rank == 0) {
-        std::cout << "\n>>> RESULTAT DU CAS 3.19 : ADVECTION VORTEX FUGU 2D <<<\n"
+        std::cout << "\n>>> RESULTAT DU CAS 3.19 : ADVECTION VORTEX COVOF 2D <<<\n"
                   << "  Maillage : " << nx << " x " << ny << "\n"
                   << "  Erreur L1 : " << std::scientific << std::setprecision(5) << err_l1 << "\n"
                   // Calcul et assignation numérique

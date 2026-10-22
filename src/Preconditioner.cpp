@@ -287,7 +287,7 @@ std::unique_ptr<PreconditionerBase> PreconditionerFactory::create(const std::str
         // Retour de fonction
         return std::make_unique<CustomPreconditioner>();
     } else {
-        // Défaut standard FUGU / Référence Académique : Jacobi diagonal
+        // Défaut standard COVOF / Référence Académique : Jacobi diagonal
         return std::make_unique<JacobiPreconditioner>();
     }
 }

@@ -13,7 +13,7 @@ class NavierStokesSolver;
 class FlowFields;
 
 /**
- * @brief Classe de base abstraite pour tous les préconditionneurs (Standard CFD / FUGU 2D)
+ * @brief Classe de base abstraite pour tous les préconditionneurs (Standard CFD / COVOF 2D)
  * Permet l'extension et la création facile de nouveaux préconditionneurs par héritage.
  */
 class PreconditionerBase {

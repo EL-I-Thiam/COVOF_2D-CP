@@ -408,7 +408,7 @@ bool Config::load_from_json(const std::string& filepath) {
 void Config::print() const {
     // Calcul et assignation numérique
     std::cout << "========================================================\n"
-              << "       FUGU 2D PARALLELE - CONFIGURATION DU CAS         \n"
+              << "       COVOF 2D PARALLELE - CONFIGURATION DU CAS         \n"
               // Calcul et assignation numérique
               << "========================================================\n"
               << " Mode calcul : " << mode << "\n"

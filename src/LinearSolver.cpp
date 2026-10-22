@@ -684,7 +684,7 @@ void MumpsSolverBridge::init(const SolverOptions& config) {}
 int MumpsSolverBridge::solve(const NavierStokesSolver& op, const PreconditionerBase& P,
                             const FlowFields& fields_old, double dt,
                             const std::vector<double>& b, std::vector<double>& x) const {
-#ifdef FUGU_HAS_MUMPS
+#ifdef COVOF_HAS_MUMPS
     // Appel direct aux routines MUMPS dmumps_c
     return 1;
 #else
@@ -706,7 +706,7 @@ void PetscSolverBridge::init(const SolverOptions& config) {}
 int PetscSolverBridge::solve(const NavierStokesSolver& op, const PreconditionerBase& P,
                             const FlowFields& fields_old, double dt,
                             const std::vector<double>& b, std::vector<double>& x) const {
-#ifdef FUGU_HAS_PETSC
+#ifdef COVOF_HAS_PETSC
     // Appel direct au contexte KSP PETSc
     return 1;
 #else
@@ -727,7 +727,7 @@ void HypreSolverBridge::init(const SolverOptions& config) {}
 int HypreSolverBridge::solve(const NavierStokesSolver& op, const PreconditionerBase& P,
                             const FlowFields& fields_old, double dt,
                             const std::vector<double>& b, std::vector<double>& x) const {
-#ifdef FUGU_HAS_HYPRE
+#ifdef COVOF_HAS_HYPRE
     // Appel direct au multigrille BoomerAMG HYPRE
     return 1;
 #else

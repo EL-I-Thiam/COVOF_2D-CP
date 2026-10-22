@@ -13,7 +13,7 @@ class NavierStokesSolver;
 class FlowFields;
 
 /**
- * @brief Interface de base abstraite pour tous les solveurs linéaires (standards CFD / FUGU 2D)
+ * @brief Interface de base abstraite pour tous les solveurs linéaires (standards CFD / COVOF 2D)
  */
 class LinearSolverBase {
 public:
@@ -220,7 +220,7 @@ public:
 };
 
 /**
- * @brief Fabrique de Solveurs Linéaires (Factory Pattern Référence Académique / FUGU 2D)
+ * @brief Fabrique de Solveurs Linéaires (Factory Pattern Référence Académique / COVOF 2D)
  */
 class SolverFactory {
 public:
