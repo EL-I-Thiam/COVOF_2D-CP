@@ -1,12 +1,13 @@
-#include "fugu/LinearSolver.hpp"
-#include "fugu/NavierStokesSolver.hpp"
-#include "fugu/MpiComm.hpp"
+#include "covof/LinearSolver.hpp"
+#include "covof/NavierStokesSolver.hpp"
+#include "covof/MpiComm.hpp"
 #include <iostream>
 #include <cmath>
 #include <algorithm>
 #include <vector>
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 // =============================================================================
 // Helper d'application du préconditionneur et de l'opérateur
@@ -792,4 +793,4 @@ std::unique_ptr<LinearSolverBase> SolverFactory::create(const std::string& type)
     }
 }
 
-} // namespace fugu
+} // namespace covof

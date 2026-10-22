@@ -9,7 +9,7 @@
 // Standard      : C++17 / MPI 3+
 // ==============================================================================
 
-#include "fugu/Simulation.hpp" // Orchestrateur principal de simulation (grille, solveur, temps)
+#include "covof/Simulation.hpp" // Orchestrateur principal de simulation (grille, solveur, temps)
 #include <mpi.h>               // Bibliothèque Message Passing Interface pour le calcul parallèle
 #include <iostream>            // Flux d'entrée/sortie standard pour l'affichage console
 #include <string>              // Gestion des chaînes de caractères pour les chemins de fichiers
@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
     // 3. Bloc d'exécution sécurisé sous surveillance des exceptions C++
     try {
         // Instanciation de l'objet Simulation encapsulant maillage, champs, solveurs et exports
-        fugu::Simulation sim;
+        covof::Simulation sim;
 
         // Initialisation de la simulation : lecture du JSON, partitionnement spatial, allocation
         if (!sim.init(MPI_COMM_WORLD, config_file)) {

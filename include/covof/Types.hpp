@@ -5,7 +5,8 @@
 #include <iostream>
 #include <cmath>
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 /**
  * @brief Types de conditions aux limites physiques (Annexe B thèse M. El Ouafa)
@@ -159,7 +160,7 @@ struct OutputConfig {
     // Déclaration de variable typée
     std::string output_dir = "output"; ///< Répertoire d'écriture
     // Déclaration de variable typée
-    std::string case_name  = "fugu";   ///< Préfixe des fichiers VTK
+    std::string case_name  = "covof";   ///< Préfixe des fichiers VTK
     // Déclaration de variable typée
     int vtk_interval = 10;             ///< Pas d'export VTK (tous les N pas de temps)
     // Déclaration de variable typée
@@ -168,4 +169,4 @@ struct OutputConfig {
     bool write_csv_history = true;     ///< Écrire l'historique temporel (centre de masse, vitesse...)
 };
 
-} // namespace fugu
+} // namespace covof

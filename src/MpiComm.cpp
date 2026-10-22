@@ -1,8 +1,9 @@
-#include "fugu/MpiComm.hpp"
+#include "covof/MpiComm.hpp"
 #include <algorithm>
 #include <cmath>
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 void MpiComm::sync_cell_scalar(const Mesh2D& mesh, std::vector<double>& field) {
     // Évaluation de la condition de contrôle
@@ -669,4 +670,4 @@ double MpiComm::global_sum(const Mesh2D& mesh, double local_val) {
     return global_val;
 }
 
-} // namespace fugu
+} // namespace covof

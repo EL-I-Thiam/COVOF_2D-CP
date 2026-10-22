@@ -9,7 +9,8 @@
 #include "LinearSolver.hpp"
 #include "VTKWriter.hpp"
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 /**
  * @brief Orchestrateur principal de la simulation CFD diphasique tout-couplée 2D
@@ -54,4 +55,4 @@ public:
     double compute_time_step() const;
 };
 
-} // namespace fugu
+} // namespace covof

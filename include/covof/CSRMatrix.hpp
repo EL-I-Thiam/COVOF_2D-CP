@@ -3,7 +3,8 @@
 #include "Mesh.hpp"
 #include <vector>
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 /**
  * @brief Structure de matrice creuse locale au format Compressed Sparse Row (CSR)
@@ -58,4 +59,4 @@ public:
     void solve_jacobi(const std::vector<double>& b, std::vector<double>& x, int num_iters = 5) const;
 };
 
-} // namespace fugu
+} // namespace covof

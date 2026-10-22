@@ -1,12 +1,13 @@
-#include "fugu/Simulation.hpp"
-#include "fugu/MpiComm.hpp"
+#include "covof/Simulation.hpp"
+#include "covof/MpiComm.hpp"
 #include <iostream>
 #include <iomanip>
 #include <fstream>
 #include <algorithm>
 #include <cmath>
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 // Déclaration de variable typée
 bool Simulation::init(MPI_Comm comm, const std::string& config_file) {
@@ -764,5 +765,5 @@ void Simulation::run_vortex_advection() {
     vtk_writer.finalize();
 }
 
-} // namespace fugu
+} // namespace covof
 

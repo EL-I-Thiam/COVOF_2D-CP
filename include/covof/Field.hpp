@@ -3,7 +3,8 @@
 #include "Mesh.hpp"
 #include <vector>
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 /**
  * @brief Champs scalaires et vectoriels sur la grille décalée MAC
@@ -85,4 +86,4 @@ public:
     }
 };
 
-} // namespace fugu
+} // namespace covof

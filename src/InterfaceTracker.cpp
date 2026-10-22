@@ -1,9 +1,10 @@
-#include "fugu/InterfaceTracker.hpp"
-#include "fugu/MpiComm.hpp"
+#include "covof/InterfaceTracker.hpp"
+#include "covof/MpiComm.hpp"
 #include <cmath>
 #include <algorithm>
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 void InterfaceTracker::set_initial_condition(const Mesh2D& mesh, const InitialConditionConfig& ic, FlowFields& fields) {
     // Déclaration de variable typée
@@ -467,4 +468,4 @@ void InterfaceTracker::advect(const Mesh2D& mesh, FlowFields& fields, double dt)
     compute_curvature_and_CSF(mesh, fields);
 }
 
-} // namespace fugu
+} // namespace covof

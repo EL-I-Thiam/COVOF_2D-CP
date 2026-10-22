@@ -1,9 +1,10 @@
-#include "fugu/CSRMatrix.hpp"
+#include "covof/CSRMatrix.hpp"
 #include <numeric>
 #include <algorithm>
 #include <cassert>
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 void CSRMatrix::set_from_triplets(int r, int c, const std::vector<int>& rows,
                                  const std::vector<int>& cols, const std::vector<double>& vals) {
@@ -104,4 +105,4 @@ void CSRMatrix::solve_jacobi(const std::vector<double>& b, std::vector<double>& 
     }
 }
 
-} // namespace fugu
+} // namespace covof

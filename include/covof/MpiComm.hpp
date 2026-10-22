@@ -5,7 +5,8 @@
 #include "Types.hpp"
 #include <vector>
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 /**
  * @brief Gestionnaire des communications MPI et des échanges de mailles fantômes (halos)
@@ -59,4 +60,4 @@ public:
     static double global_sum(const Mesh2D& mesh, double local_val);
 };
 
-} // namespace fugu
+} // namespace covof

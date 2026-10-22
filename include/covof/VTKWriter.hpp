@@ -5,7 +5,8 @@
 #include <string>
 #include <fstream>
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 /**
  * @brief Gestionnaire d'exportation pour ParaView (XML VTK .vtr/.pvtr) et diagnostics CSV
@@ -15,7 +16,7 @@ public:
     // Déclaration de variable typée
     std::string output_dir = "output";
     // Déclaration de variable typée
-    std::string case_name  = "fugu";
+    std::string case_name  = "covof";
     std::ofstream csv_file;
 
     // Calcul et assignation numérique
@@ -42,4 +43,4 @@ public:
     }
 };
 
-} // namespace fugu
+} // namespace covof

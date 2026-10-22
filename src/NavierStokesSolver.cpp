@@ -1,9 +1,10 @@
-#include "fugu/NavierStokesSolver.hpp"
-#include "fugu/MpiComm.hpp"
+#include "covof/NavierStokesSolver.hpp"
+#include "covof/MpiComm.hpp"
 #include <cmath>
 #include <iostream>
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 void NavierStokesSolver::init(const Mesh2D& m, const Config& cfg) {
     // Calcul et assignation numérique
@@ -1107,5 +1108,5 @@ double NavierStokesSolver::compute_mean_nusselt_hot_wall(const FlowFields& field
     return 1.0;
 }
 
-} // namespace fugu
+} // namespace covof
 

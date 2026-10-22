@@ -4,7 +4,8 @@
 #include "Field.hpp"
 #include "Config.hpp"
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 /**
  * @brief Module de capture d'interface et de calcul de la tension de surface (Modèle CSF)
@@ -73,4 +74,4 @@ public:
     void compute_curvature_and_CSF(const Mesh2D& mesh, FlowFields& fields);
 };
 
-} // namespace fugu
+} // namespace covof

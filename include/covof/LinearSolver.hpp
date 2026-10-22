@@ -6,7 +6,8 @@
 #include <string>
 #include <memory>
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 class NavierStokesSolver;
 class FlowFields;
@@ -229,4 +230,4 @@ public:
 // Alias de rétrocompatibilité
 using LinearSolver = LinearSolverBase;
 
-} // namespace fugu
+} // namespace covof

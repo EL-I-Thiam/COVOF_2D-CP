@@ -3,7 +3,8 @@
 #include "Types.hpp"
 #include <string>
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 /**
  * @brief Structure complète regroupant tous les paramètres de simulation
@@ -93,4 +94,4 @@ public:
     void print() const;
 };
 
-} // namespace fugu
+} // namespace covof

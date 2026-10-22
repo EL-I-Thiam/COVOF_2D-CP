@@ -1,10 +1,11 @@
-#include "fugu/Preconditioner.hpp"
-#include "fugu/NavierStokesSolver.hpp"
+#include "covof/Preconditioner.hpp"
+#include "covof/NavierStokesSolver.hpp"
 #include <cmath>
 #include <iostream>
 #include <algorithm>
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 // =============================================================================
 // 1. Préconditionneur Jacobi Diagonal
@@ -291,4 +292,4 @@ std::unique_ptr<PreconditionerBase> PreconditionerFactory::create(const std::str
     }
 }
 
-} // namespace fugu
+} // namespace covof

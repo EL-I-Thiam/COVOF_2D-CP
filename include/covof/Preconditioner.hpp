@@ -6,7 +6,8 @@
 #include <memory>
 #include <functional>
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 class NavierStokesSolver;
 class FlowFields;
@@ -148,4 +149,4 @@ public:
 // Alias de rétrocompatibilité
 using BlockPreconditioner = PreconditionerBase;
 
-} // namespace fugu
+} // namespace covof

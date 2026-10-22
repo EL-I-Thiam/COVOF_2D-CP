@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ==============================================================================
-# FUGU 2D - Script de Vérification et de Validation Automatique Complet
+# COVOF 2D - Script de Vérification et de Validation Automatique Complet
 # Couvre TOUS les cas des Chapitres 3, 4, 6 et 7 du Cahier de Validation et Vérification CFD 2D
 # ==============================================================================
 
@@ -79,7 +79,7 @@ def reconstruct_global_field(output_dir, case_name, array_name, step=None):
 def verify_all():
     report_rows = []
     print("\n" + "="*85)
-    print("      FUGU 2D - EVALUATION COMPLETE DES VALIDATIONS & VERIFICATIONS")
+    print("      COVOF 2D - EVALUATION COMPLETE DES VALIDATIONS & VERIFICATIONS")
     print("      Conforme au Cahier de Validation et Vérification CFD 2D (Chapitres 3, 4, 6, 7)")
     print("="*85 + "\n")
 
@@ -101,7 +101,7 @@ def verify_all():
             "Cas": "3.1 Laplacien cartésien",
             "Métrique": f"Erreur L1 ({nx}x{nx//2})",
             "Cible de Référence Académique": "5.60e-06 (Ordre 2.0)",
-            "Valeur FUGU 2D": f"{err_l1:.2e}",
+            "Valeur COVOF 2D": f"{err_l1:.2e}",
             "Écart Relatif": f"{abs(err_l1 - 5.60e-6)/5.60e-6 * 100:.1f} %",
             "Statut": status
         })
@@ -126,7 +126,7 @@ def verify_all():
             "Cas": "3.7 Poiseuille stationnaire",
             "Métrique": "Vitesse max u_max [m/s]",
             "Cible de Référence Académique": f"{max_u_ex:.4f} m/s",
-            "Valeur FUGU 2D": f"{max_u_num:.4f} m/s",
+            "Valeur COVOF 2D": f"{max_u_num:.4f} m/s",
             "Écart Relatif": f"{abs(max_u_num - max_u_ex)/max_u_ex * 100:.2f} %",
             "Statut": status
         })
@@ -156,7 +156,7 @@ def verify_all():
             "Cas": "3.8 Poiseuille Szymanski",
             "Métrique": "Erreur L1 transitoire (t=1s)",
             "Cible de Référence Académique": "3.13e-04 (O(dt))",
-            "Valeur FUGU 2D": f"{l1_err:.2e}",
+            "Valeur COVOF 2D": f"{l1_err:.2e}",
             "Écart Relatif": f"L1 = {l1_err:.2e}",
             "Statut": status
         })
@@ -183,7 +183,7 @@ def verify_all():
             "Cas": "3.9 Poiseuille viscosité variable",
             "Métrique": "Erreur L1 profil axial u(y)",
             "Cible de Référence Académique": "2.41e-05 (Tableau 1)",
-            "Valeur FUGU 2D": f"L1 = {err_l1:.2e} m/s",
+            "Valeur COVOF 2D": f"L1 = {err_l1:.2e} m/s",
             "Écart Relatif": f"L1 = {err_l1:.2e} ({rel_err:.2f}%)",
             "Statut": status
         })
@@ -203,7 +203,7 @@ def verify_all():
             "Cas": "3.19 Vortex cisaillement",
             "Métrique": "Erreur L1 reconstitution (64x64)",
             "Cible de Référence Académique": f"{err_ref_vort:.5f} (VOF-TVD)",
-            "Valeur FUGU 2D": f"{err_l1_vort:.5f}",
+            "Valeur COVOF 2D": f"{err_l1_vort:.5f}",
             "Écart Relatif": f"{ecart_vort:.2f} %",
             "Statut": status
         })
@@ -236,7 +236,7 @@ def verify_all():
             "Cas": "4.1 Marche descendante Re=100",
             "Métrique": "Longueur recollement xr/H",
             "Cible de Référence Académique": f"{xr_ref:.3f} (Armaly)",
-            "Valeur FUGU 2D": f"{xr:.3f}",
+            "Valeur COVOF 2D": f"{xr:.3f}",
             "Écart Relatif": f"{rel_err:.2f} %",
             "Statut": status
         })
@@ -272,7 +272,7 @@ def verify_all():
             "Cas": "4.4 Cylindre Re=20",
             "Métrique": "Longueur recirculation L/D",
             "Cible de Référence Académique": f"{L_ref:.3f} (Ordre 1 Tableau 1)",
-            "Valeur FUGU 2D": f"{L_rec:.3f}",
+            "Valeur COVOF 2D": f"{L_rec:.3f}",
             "Écart Relatif": f"{err_cyl:.2f} %",
             "Statut": status
         })
@@ -303,7 +303,7 @@ def verify_all():
             "Cas": "4.5 Cavité entraînée Re=1000",
             "Métrique": "Centre tourbillon (x, y)",
             "Cible de Référence Académique": f"({x_ghia:.4f}, {y_ghia:.4f})",
-            "Valeur FUGU 2D": f"({x_vortex:.4f}, {y_vortex:.4f})",
+            "Valeur COVOF 2D": f"({x_vortex:.4f}, {y_vortex:.4f})",
             "Écart Relatif": f"Delta R = {err_vortex:.4f}",
             "Statut": status
         })
@@ -321,7 +321,7 @@ def verify_all():
             "Cas": "4.7 Cavité en forme de L",
             "Métrique": "Vitesse max recirculation [m/s]",
             "Cible de Référence Académique": "0.8900 m/s (3 vortex)",
-            "Valeur FUGU 2D": f"{max_u_l:.4f} m/s",
+            "Valeur COVOF 2D": f"{max_u_l:.4f} m/s",
             "Écart Relatif": f"< 1.0 % (MUMPS/Brinkman)",
             "Statut": status
         })
@@ -349,7 +349,7 @@ def verify_all():
             "Cas": "6.1 Convection de Vahl Davis",
             "Métrique": "Nombre de Nusselt moyen Nu",
             "Cible de Référence Académique": f"{nu_ref:.4f} (Tableau 1)",
-            "Valeur FUGU 2D": f"{nu_mean:.4f}",
+            "Valeur COVOF 2D": f"{nu_mean:.4f}",
             "Écart Relatif": f"{err_nu:.1f} % (Plage [2.2, 2.7])",
             "Statut": status
         })
@@ -373,7 +373,7 @@ def verify_all():
             "Cas": "7.1 Rupture de barrage",
             "Métrique": "Vitesse front d'onde [m/s]",
             "Cible de Référence Académique": f"{v_theor:.2f} m/s (sqrt(2gh))",
-            "Valeur FUGU 2D": f"{max_u:.2f} m/s",
+            "Valeur COVOF 2D": f"{max_u:.2f} m/s",
             "Écart Relatif": f"Front dynamique Re > 1000",
             "Statut": status
         })
@@ -400,7 +400,7 @@ def verify_all():
             "Cas": "7.4 Goutte statique (Laplace)",
             "Métrique": "Saut de pression Delta P [Pa]",
             "Cible de Référence Académique": f"{delta_p_exact:.2f} Pa (sigma/R)",
-            "Valeur FUGU 2D": f"{delta_p:.2f} Pa",
+            "Valeur COVOF 2D": f"{delta_p:.2f} Pa",
             "Écart Relatif": f"{err_dp:.2f} %",
             "Statut": status
         })
@@ -423,7 +423,7 @@ def verify_all():
             "Cas": "7.5 Bulle montante (Hysing)",
             "Métrique": "Conservation volume bulle",
             "Cible de Référence Académique": "100.0 % (Erreur < 1.0%)",
-            "Valeur FUGU 2D": f"{100.0 - vol_err:.2f} %",
+            "Valeur COVOF 2D": f"{100.0 - vol_err:.2f} %",
             "Écart Relatif": f"{vol_err:.2f} % (Vc={v_final:.3e} m/s)",
             "Statut": status
         })
@@ -441,8 +441,8 @@ def verify_all():
     
     df_report.to_csv("validation_summary.csv", index=False)
     with open("validation_summary.md", "w") as f:
-        f.write("# Rapport d'Exécution et de Validation Exhaustif FUGU 2D\n\n")
-        f.write("Ce rapport présente la comparaison rigoureuse entre les résultats obtenus par **FUGU 2D** (C++20 / OpenMPI) et les valeurs de référence publiées dans le **Cahier de Validation et Vérification CFD 2D**.\n\n")
+        f.write("# Rapport d'Exécution et de Validation Exhaustif COVOF 2D\n\n")
+        f.write("Ce rapport présente la comparaison rigoureuse entre les résultats obtenus par **COVOF 2D** (C++20 / OpenMPI) et les valeurs de référence publiées dans le **Cahier de Validation et Vérification CFD 2D**.\n\n")
         f.write(df_report.to_markdown(index=False))
         f.write("\n\n### Détails des Chapitres Traités :\n")
         f.write("- **Chapitre 3** : Vérifications sur solutions exactes (Laplacien, Poiseuille stationnaire, Poiseuille Szymanski, Poiseuille viscosité variable exponentielle, Advection vortex avec cisaillement)\n")
@@ -452,7 +452,7 @@ def verify_all():
         f.write("*Généré automatiquement par scripts/verify_cases.py*\n")
         
     all_pass = all(r["Statut"] == "PASS" for r in report_rows)
-    print(f">>> BILAN GLOBAL VALIDATIONS FUGU 2D : {'TOUS LES 13 CAS VALIDÉS AVEC SUCCÈS (100% SUCCES)' if all_pass else 'CERTAINS CAS EN COURS'} <<<\n")
+    print(f">>> BILAN GLOBAL VALIDATIONS COVOF 2D : {'TOUS LES 13 CAS VALIDÉS AVEC SUCCÈS (100% SUCCES)' if all_pass else 'CERTAINS CAS EN COURS'} <<<\n")
     return all_pass
 
 if __name__ == "__main__":

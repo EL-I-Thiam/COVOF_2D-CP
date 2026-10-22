@@ -6,7 +6,8 @@
 #include "CSRMatrix.hpp"
 #include <vector>
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 /**
  * @brief Opérateur couplé monolithique pour Navier-Stokes diphasique
@@ -182,4 +183,4 @@ public:
     }
 };
 
-} // namespace fugu
+} // namespace covof

@@ -1,11 +1,12 @@
-#include "fugu/Config.hpp"
+#include "covof/Config.hpp"
 #include <fstream>
 #include <sstream>
 #include <iostream>
 #include <algorithm>
 #include <cctype>
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 // Fonctions utilitaires locales pour parser le JSON simplement
 static std::string trim(const std::string& str) {
@@ -453,4 +454,4 @@ void Config::print() const {
               << "========================================================\n";
 }
 
-} // namespace fugu
+} // namespace covof

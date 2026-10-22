@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Script de tracé des métriques et diagnostics des simulations FUGU 2D.
+Script de tracé des métriques et diagnostics des simulations COVOF 2D.
 Génère des courbes de validation pour :
  1. La trajectoire et vitesse de la bulle ascendante (Rising Bubble)
  2. La convergence et saut de pression de la goutte statique (Static Droplet)

@@ -1,11 +1,12 @@
-#include "fugu/VTKWriter.hpp"
-#include "fugu/MpiComm.hpp"
+#include "covof/VTKWriter.hpp"
+#include "covof/MpiComm.hpp"
 #include <iomanip>
 #include <sstream>
 #include <sys/stat.h>
 #include <cmath>
 
-namespace fugu {
+namespace covof {
+namespace fugu = covof; // Alias rétrocompatibilité
 
 void VTKWriter::init(const Mesh2D& mesh, const std::string& out_dir, const std::string& name) {
     // Calcul et assignation numérique
@@ -342,4 +343,4 @@ void VTKWriter::write_diagnostics(const Mesh2D& mesh, const FlowFields& fields, 
     }
 }
 
-} // namespace fugu
+} // namespace covof
