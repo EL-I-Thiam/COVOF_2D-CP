@@ -169,4 +169,18 @@ struct OutputConfig {
     bool write_csv_history = true;     ///< Écrire l'historique temporel (centre de masse, vitesse...)
 };
 
+/**
+ * @brief Options de capture d'interface et d'advection VOF
+ */
+struct VofConfig {
+    // Déclaration de variable typée
+    std::string reconstruction_method = "PLIC";   ///< "SLIC", "PLIC", "LVIRA", "ELVIRA"
+    // Déclaration de variable typée
+    std::string advection_method = "VOF_TVD";    ///< "VOF_TVD", "CIAM", "WEYMOUTH_YUE"
+    // Déclaration de variable typée
+    std::string tvd_limiter = "SUPERBEE";        ///< "SUPERBEE", "VAN_LEER", "MUSCL", "HRIC"
+    // Déclaration de variable typée
+    double cfl_vof = 0.4;                        ///< Nombre de CFL maximum pour le transport VOF
+};
+
 } // namespace covof

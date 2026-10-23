@@ -3,6 +3,7 @@
 #include "Mesh.hpp"
 #include "Field.hpp"
 #include "Config.hpp"
+#include "InterfaceReconstruction.hpp"
 
 namespace covof {
 namespace fugu = covof; // Alias rétrocompatibilité
@@ -29,6 +30,13 @@ public:
     // Déclaration de variable typée
     double visc_mu0 = 1.85e-5;
 
+    // Configuration VOF avancée (SLIC, PLIC, LVIRA, ELVIRA, CIAM, Weymouth & Yue, limiteurs)
+    VofConfig vof_cfg;
+    // Segments d'interface géométriques reconstruits
+    std::vector<InterfaceSegment> interface_segments;
+    // Compteur de pas pour Strang splitting alterné
+    int step_count = 0;
+
     // Calcul et assignation numérique
     InterfaceTracker() = default;
 
@@ -51,6 +59,8 @@ public:
         visc_e = cfg.visc_e;
         // Calcul et assignation numérique
         visc_mu0 = cfg.visc_mu0;
+        // Options VOF
+        vof_cfg = cfg.vof;
     }
 
     /**
@@ -59,9 +69,24 @@ public:
     void set_initial_condition(const Mesh2D& mesh, const InitialConditionConfig& ic, FlowFields& fields);
 
     /**
-     * @brief Transporte le champ C à l'aide du champ de vitesse u, v (Schéma TVD conservatif)
+     * @brief Transporte le champ C selon l'algorithme choisi (VOF-TVD, CIAM, Weymouth & Yue)
      */
     void advect(const Mesh2D& mesh, FlowFields& fields, double dt);
+
+    /**
+     * @brief Transport algébrique VOF-TVD avec limiteurs (Superbee, Van Leer, MUSCL, HRIC)
+     */
+    void advect_tvd(const Mesh2D& mesh, FlowFields& fields, double dt);
+
+    /**
+     * @brief Transport géométrique directionnel CIAM (Calcul d'Interface Affine par Morceaux)
+     */
+    void advect_ciam(const Mesh2D& mesh, FlowFields& fields, double dt);
+
+    /**
+     * @brief Transport géométrique unsplit multidimensionnel de Weymouth et Yue (2010)
+     */
+    void advect_weymouth_yue(const Mesh2D& mesh, FlowFields& fields, double dt);
 
     /**
      * @brief Met à jour les propriétés physiques effectives (rho, mu) aux centres, faces et nœuds

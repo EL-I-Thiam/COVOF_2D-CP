@@ -331,63 +331,72 @@ void InterfaceTracker::compute_curvature_and_CSF(const Mesh2D& mesh, FlowFields&
 }
 
 void InterfaceTracker::advect(const Mesh2D& mesh, FlowFields& fields, double dt) {
-    // Déclaration de variable typée
+    // Sélection de la méthode d'advection configurée par l'utilisateur
+    AdvectionMethod adv_method = InterfaceReconstruction::parse_advection_method(vof_cfg.advection_method);
+
+    // Initialisation du vecteur de segments d'interface si nécessaire
+    int total_cells = (mesh.nx_local + 2) * (mesh.ny_local + 2);
+    if (static_cast<int>(interface_segments.size()) != total_cells) {
+        interface_segments.resize(total_cells);
+    }
+
+    // Répartition vers l'algorithme d'advection sélectionné
+    switch (adv_method) {
+        case AdvectionMethod::CIAM:
+            advect_ciam(mesh, fields, dt);
+            break;
+        case AdvectionMethod::WEYMOUTH_YUE:
+            advect_weymouth_yue(mesh, fields, dt);
+            break;
+        case AdvectionMethod::VOF_TVD:
+        default:
+            advect_tvd(mesh, fields, dt);
+            break;
+    }
+
+    // Incrémentation du compteur de pas pour Strang splitting alterné
+    step_count++;
+
+    // Synchronisation MPI des fractions volumiques sur les mailles fantômes
+    MpiComm::sync_cell_scalar(mesh, fields.C);
+
+    // Mise à jour des grandeurs physiques dérivées (masse volumique, viscosité, tension de surface)
+    update_physical_properties(mesh, fields);
+    compute_curvature_and_CSF(mesh, fields);
+}
+
+void InterfaceTracker::advect_tvd(const Mesh2D& mesh, FlowFields& fields, double dt) {
     int nx = mesh.nx_local;
-    // Déclaration de variable typée
     int ny = mesh.ny_local;
-    // Déclaration de variable typée
     double dx = mesh.dx;
-    // Déclaration de variable typée
     double dy = mesh.dy;
 
-    // Déclaration de variable typée
     std::vector<double> C_new = fields.C;
-
-    // Schéma d'advection TVD avec limiteur de flux Superbee
-    auto superbee = [&](double r) {
-        // Retour de fonction
-        return std::max(0.0, std::max(std::min(2.0 * r, 1.0), std::min(r, 2.0)));
-    };
+    TvdLimiter limiter = InterfaceReconstruction::parse_tvd_limiter(vof_cfg.tvd_limiter);
 
     // Calcul des flux de fraction volumique sur les faces X
     std::vector<double> flux_x((nx + 2) * (ny + 2), 0.0);
-    // Boucle spatiale sur les cellules locales selon l'axe vertical Y (ordonnées)
     for (int j = 1; j <= ny; ++j) {
-        // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
         for (int i = 1; i <= nx + 1; ++i) {
-            // Déclaration de variable typée
             double u_face = fields.u[mesh.u_idx(i, j)];
-            // Déclaration de variable typée
             double c_L = fields.C[mesh.cell_idx(i - 1, j)];
-            // Déclaration de variable typée
             double c_R = fields.C[mesh.cell_idx(i, j)];
 
-            // Évaluation de la condition de contrôle
             if (u_face >= 0.0) {
-                // Déclaration de variable typée
                 int i_up = std::max(0, i - 2);
-                // Déclaration de variable typée
-                double dC_up = c_L - fields.C[mesh.cell_idx(i_up, j)];
-                // Déclaration de variable typée
+                double c_U = fields.C[mesh.cell_idx(i_up, j)];
+                double dC_up = c_L - c_U;
                 double dC_loc = c_R - c_L;
-                // Déclaration de variable typée
                 double r = (std::abs(dC_loc) > 1.0e-12) ? dC_up / dC_loc : 0.0;
-                // Déclaration de variable typée
-                double phi = superbee(r);
-                // Calcul de la résolution géométrique de cellule
+                double phi = InterfaceReconstruction::evaluate_limiter(limiter, r, c_L, c_U, c_R);
                 flux_x[mesh.cell_idx(i, j)] = u_face * (c_L + 0.5 * phi * (1.0 - u_face * dt / dx) * dC_loc);
             } else {
-                // Déclaration de variable typée
                 int i_down = std::min(nx + 1, i + 1);
-                // Déclaration de variable typée
-                double dC_up = fields.C[mesh.cell_idx(i_down, j)] - c_R;
-                // Déclaration de variable typée
+                double c_U = fields.C[mesh.cell_idx(i_down, j)];
+                double dC_up = c_U - c_R;
                 double dC_loc = c_R - c_L;
-                // Déclaration de variable typée
                 double r = (std::abs(dC_loc) > 1.0e-12) ? dC_up / dC_loc : 0.0;
-                // Déclaration de variable typée
-                double phi = superbee(r);
-                // Calcul de la résolution géométrique de cellule
+                double phi = InterfaceReconstruction::evaluate_limiter(limiter, r, c_R, c_U, c_L);
                 flux_x[mesh.cell_idx(i, j)] = u_face * (c_R - 0.5 * phi * (1.0 + u_face * dt / dx) * dC_loc);
             }
         }
@@ -395,77 +404,359 @@ void InterfaceTracker::advect(const Mesh2D& mesh, FlowFields& fields, double dt)
 
     // Calcul des flux sur les faces Y
     std::vector<double> flux_y((nx + 2) * (ny + 2), 0.0);
-    // Boucle spatiale sur les cellules locales selon l'axe vertical Y (ordonnées)
     for (int j = 1; j <= ny + 1; ++j) {
-        // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
         for (int i = 1; i <= nx; ++i) {
-            // Déclaration de variable typée
             double v_face = fields.v[mesh.v_idx(i, j)];
-            // Déclaration de variable typée
             double c_B = fields.C[mesh.cell_idx(i, j - 1)];
-            // Déclaration de variable typée
             double c_T = fields.C[mesh.cell_idx(i, j)];
 
-            // Évaluation de la condition de contrôle
             if (v_face >= 0.0) {
-                // Déclaration de variable typée
                 int j_up = std::max(0, j - 2);
-                // Déclaration de variable typée
-                double dC_up = c_B - fields.C[mesh.cell_idx(i, j_up)];
-                // Déclaration de variable typée
+                double c_U = fields.C[mesh.cell_idx(i, j_up)];
+                double dC_up = c_B - c_U;
                 double dC_loc = c_T - c_B;
-                // Déclaration de variable typée
                 double r = (std::abs(dC_loc) > 1.0e-12) ? dC_up / dC_loc : 0.0;
-                // Déclaration de variable typée
-                double phi = superbee(r);
-                // Calcul de la résolution géométrique de cellule
+                double phi = InterfaceReconstruction::evaluate_limiter(limiter, r, c_B, c_U, c_T);
                 flux_y[mesh.cell_idx(i, j)] = v_face * (c_B + 0.5 * phi * (1.0 - v_face * dt / dy) * dC_loc);
             } else {
-                // Déclaration de variable typée
                 int j_down = std::min(ny + 1, j + 1);
-                // Déclaration de variable typée
-                double dC_up = fields.C[mesh.cell_idx(i, j_down)] - c_T;
-                // Déclaration de variable typée
+                double c_U = fields.C[mesh.cell_idx(i, j_down)];
+                double dC_up = c_U - c_T;
                 double dC_loc = c_T - c_B;
-                // Déclaration de variable typée
                 double r = (std::abs(dC_loc) > 1.0e-12) ? dC_up / dC_loc : 0.0;
-                // Déclaration de variable typée
-                double phi = superbee(r);
-                // Calcul de la résolution géométrique de cellule
+                double phi = InterfaceReconstruction::evaluate_limiter(limiter, r, c_T, c_U, c_B);
                 flux_y[mesh.cell_idx(i, j)] = v_face * (c_T - 0.5 * phi * (1.0 + v_face * dt / dy) * dC_loc);
             }
         }
     }
 
-    // Mise à jour conservative
+    // Mise à jour conservative directe
     for (int j = 1; j <= ny; ++j) {
-        // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
         for (int i = 1; i <= nx; ++i) {
-            // Déclaration de variable typée
             int idx = mesh.cell_idx(i, j);
-            // Déclaration de variable typée
             double fx_in  = flux_x[mesh.cell_idx(i, j)];
-            // Déclaration de variable typée
             double fx_out = flux_x[mesh.cell_idx(i + 1, j)];
-            // Déclaration de variable typée
             double fy_in  = flux_y[mesh.cell_idx(i, j)];
-            // Déclaration de variable typée
             double fy_out = flux_y[mesh.cell_idx(i, j + 1)];
 
-            // Calcul de la résolution géométrique de cellule
             C_new[idx] = fields.C[idx] - (dt / dx) * (fx_out - fx_in) - (dt / dy) * (fy_out - fy_in);
-            // Calcul de la résolution géométrique de cellule
             C_new[idx] = std::clamp(C_new[idx], 0.0, 1.0);
         }
     }
 
-    // Calcul et assignation numérique
     fields.C = C_new;
-    MpiComm::sync_cell_scalar(mesh, fields.C);
+}
 
-    // Mise à jour des grandeurs physiques dérivées
-    update_physical_properties(mesh, fields);
-    compute_curvature_and_CSF(mesh, fields);
+void InterfaceTracker::advect_ciam(const Mesh2D& mesh, FlowFields& fields, double dt) {
+    int nx = mesh.nx_local;
+    int ny = mesh.ny_local;
+    double dx = mesh.dx;
+    double dy = mesh.dy;
+
+    ReconstructionMethod recon_method = InterfaceReconstruction::parse_reconstruction_method(vof_cfg.reconstruction_method);
+    bool x_first = (step_count % 2 == 0);
+
+    // Fonction lambda pour un balayage directionnel X
+    auto sweep_x = [&](std::vector<double>& C_in, std::vector<double>& C_out) {
+        InterfaceReconstruction::reconstruct(recon_method, mesh, C_in, interface_segments);
+        std::vector<double> flux_vol_x((nx + 2) * (ny + 2), 0.0);
+
+        for (int j = 1; j <= ny; ++j) {
+            for (int i = 1; i <= nx + 1; ++i) {
+                double u_face = fields.u[mesh.u_idx(i, j)];
+                double delta_x = std::abs(u_face) * dt;
+                if (delta_x <= 1.0e-14) continue;
+
+                if (u_face > 0.0) {
+                    // Donneur cellule i-1
+                    int donor_idx = mesh.cell_idx(i - 1, j);
+                    double x_face_pos = mesh.xv(i);
+                    double box_xmin = x_face_pos - delta_x;
+                    double box_xmax = x_face_pos;
+                    double box_ymin = mesh.yv(j);
+                    double box_ymax = mesh.yv(j + 1);
+
+                    const auto& seg = interface_segments[donor_idx];
+                    flux_vol_x[mesh.cell_idx(i, j)] = InterfaceReconstruction::cut_box_area(box_xmin, box_xmax, box_ymin, box_ymax,
+                                                                                           seg.nx, seg.ny, seg.alpha);
+                } else {
+                    // Donneur cellule i
+                    int donor_idx = mesh.cell_idx(i, j);
+                    double x_face_pos = mesh.xv(i);
+                    double box_xmin = x_face_pos;
+                    double box_xmax = x_face_pos + delta_x;
+                    double box_ymin = mesh.yv(j);
+                    double box_ymax = mesh.yv(j + 1);
+
+                    const auto& seg = interface_segments[donor_idx];
+                    flux_vol_x[mesh.cell_idx(i, j)] = -InterfaceReconstruction::cut_box_area(box_xmin, box_xmax, box_ymin, box_ymax,
+                                                                                            seg.nx, seg.ny, seg.alpha);
+                }
+            }
+        }
+
+        for (int j = 1; j <= ny; ++j) {
+            for (int i = 1; i <= nx; ++i) {
+                int idx = mesh.cell_idx(i, j);
+                double f_in  = flux_vol_x[mesh.cell_idx(i, j)];
+                double f_out = flux_vol_x[mesh.cell_idx(i + 1, j)];
+                double u_in  = fields.u[mesh.u_idx(i, j)];
+                double u_out = fields.u[mesh.u_idx(i + 1, j)];
+
+                // Mise à jour conservative 1D avec compensation de divergence
+                double denom = dx - dt * (u_out - u_in);
+                if (denom > 1.0e-12) {
+                    C_out[idx] = (C_in[idx] * dx - (f_out - f_in)) / denom;
+                } else {
+                    C_out[idx] = C_in[idx] - (f_out - f_in) / dx;
+                }
+                C_out[idx] = std::clamp(C_out[idx], 0.0, 1.0);
+            }
+        }
+        MpiComm::sync_cell_scalar(mesh, C_out);
+    };
+
+    // Fonction lambda pour un balayage directionnel Y
+    auto sweep_y = [&](std::vector<double>& C_in, std::vector<double>& C_out) {
+        InterfaceReconstruction::reconstruct(recon_method, mesh, C_in, interface_segments);
+        std::vector<double> flux_vol_y((nx + 2) * (ny + 2), 0.0);
+
+        for (int j = 1; j <= ny + 1; ++j) {
+            for (int i = 1; i <= nx; ++i) {
+                double v_face = fields.v[mesh.v_idx(i, j)];
+                double delta_y = std::abs(v_face) * dt;
+                if (delta_y <= 1.0e-14) continue;
+
+                if (v_face > 0.0) {
+                    // Donneur cellule j-1
+                    int donor_idx = mesh.cell_idx(i, j - 1);
+                    double y_face_pos = mesh.yv(j);
+                    double box_xmin = mesh.xv(i);
+                    double box_xmax = mesh.xv(i + 1);
+                    double box_ymin = y_face_pos - delta_y;
+                    double box_ymax = y_face_pos;
+
+                    const auto& seg = interface_segments[donor_idx];
+                    flux_vol_y[mesh.cell_idx(i, j)] = InterfaceReconstruction::cut_box_area(box_xmin, box_xmax, box_ymin, box_ymax,
+                                                                                           seg.nx, seg.ny, seg.alpha);
+                } else {
+                    // Donneur cellule j
+                    int donor_idx = mesh.cell_idx(i, j);
+                    double y_face_pos = mesh.yv(j);
+                    double box_xmin = mesh.xv(i);
+                    double box_xmax = mesh.xv(i + 1);
+                    double box_ymin = y_face_pos;
+                    double box_ymax = y_face_pos + delta_y;
+
+                    const auto& seg = interface_segments[donor_idx];
+                    flux_vol_y[mesh.cell_idx(i, j)] = -InterfaceReconstruction::cut_box_area(box_xmin, box_xmax, box_ymin, box_ymax,
+                                                                                            seg.nx, seg.ny, seg.alpha);
+                }
+            }
+        }
+
+        for (int j = 1; j <= ny; ++j) {
+            for (int i = 1; i <= nx; ++i) {
+                int idx = mesh.cell_idx(i, j);
+                double f_in  = flux_vol_y[mesh.cell_idx(i, j)];
+                double f_out = flux_vol_y[mesh.cell_idx(i, j + 1)];
+                double v_in  = fields.v[mesh.v_idx(i, j)];
+                double v_out = fields.v[mesh.v_idx(i, j + 1)];
+
+                double denom = dy - dt * (v_out - v_in);
+                if (denom > 1.0e-12) {
+                    C_out[idx] = (C_in[idx] * dy - (f_out - f_in)) / denom;
+                } else {
+                    C_out[idx] = C_in[idx] - (f_out - f_in) / dy;
+                }
+                C_out[idx] = std::clamp(C_out[idx], 0.0, 1.0);
+            }
+        }
+        MpiComm::sync_cell_scalar(mesh, C_out);
+    };
+
+    std::vector<double> C_star = fields.C;
+    std::vector<double> C_final = fields.C;
+
+    if (x_first) {
+        // Balayage X puis Y
+        sweep_x(fields.C, C_star);
+        sweep_y(C_star, C_final);
+    } else {
+        // Balayage Y puis X
+        sweep_y(fields.C, C_star);
+        sweep_x(C_star, C_final);
+    }
+
+    fields.C = C_final;
+}
+
+void InterfaceTracker::advect_weymouth_yue(const Mesh2D& mesh, FlowFields& fields, double dt) {
+    int nx = mesh.nx_local;
+    int ny = mesh.ny_local;
+    double dx = mesh.dx;
+    double dy = mesh.dy;
+    double cell_area = dx * dy;
+
+    ReconstructionMethod recon_method = InterfaceReconstruction::parse_reconstruction_method(vof_cfg.reconstruction_method);
+
+    // 1. Unique étape de reconstruction géométrique sur le champ initial C^n
+    InterfaceReconstruction::reconstruct(recon_method, mesh, fields.C, interface_segments);
+
+    // 2. Calcul des flux 1D de faces géométriques
+    std::vector<double> f_vol_x((nx + 2) * (ny + 2), 0.0);
+    std::vector<double> f_vol_y((nx + 2) * (ny + 2), 0.0);
+
+    // Faces X
+    for (int j = 1; j <= ny; ++j) {
+        for (int i = 1; i <= nx + 1; ++i) {
+            double u_face = fields.u[mesh.u_idx(i, j)];
+            double delta_x = std::abs(u_face) * dt;
+            if (delta_x <= 1.0e-14) continue;
+
+            if (u_face > 0.0) {
+                int donor_idx = mesh.cell_idx(i - 1, j);
+                double x_pos = mesh.xv(i);
+                const auto& seg = interface_segments[donor_idx];
+                f_vol_x[mesh.cell_idx(i, j)] = InterfaceReconstruction::cut_box_area(x_pos - delta_x, x_pos,
+                                                                                     mesh.yv(j), mesh.yv(j + 1),
+                                                                                     seg.nx, seg.ny, seg.alpha);
+            } else {
+                int donor_idx = mesh.cell_idx(i, j);
+                double x_pos = mesh.xv(i);
+                const auto& seg = interface_segments[donor_idx];
+                f_vol_x[mesh.cell_idx(i, j)] = -InterfaceReconstruction::cut_box_area(x_pos, x_pos + delta_x,
+                                                                                      mesh.yv(j), mesh.yv(j + 1),
+                                                                                      seg.nx, seg.ny, seg.alpha);
+            }
+        }
+    }
+
+    // Faces Y
+    for (int j = 1; j <= ny + 1; ++j) {
+        for (int i = 1; i <= nx; ++i) {
+            double v_face = fields.v[mesh.v_idx(i, j)];
+            double delta_y = std::abs(v_face) * dt;
+            if (delta_y <= 1.0e-14) continue;
+
+            if (v_face > 0.0) {
+                int donor_idx = mesh.cell_idx(i, j - 1);
+                double y_pos = mesh.yv(j);
+                const auto& seg = interface_segments[donor_idx];
+                f_vol_y[mesh.cell_idx(i, j)] = InterfaceReconstruction::cut_box_area(mesh.xv(i), mesh.xv(i + 1),
+                                                                                     y_pos - delta_y, y_pos,
+                                                                                     seg.nx, seg.ny, seg.alpha);
+            } else {
+                int donor_idx = mesh.cell_idx(i, j);
+                double y_pos = mesh.yv(j);
+                const auto& seg = interface_segments[donor_idx];
+                f_vol_y[mesh.cell_idx(i, j)] = -InterfaceReconstruction::cut_box_area(mesh.xv(i), mesh.xv(i + 1),
+                                                                                      y_pos, y_pos + delta_y,
+                                                                                      seg.nx, seg.ny, seg.alpha);
+            }
+        }
+    }
+
+    // 3. Correction multidimensionnelle des flux de coin (Corner Flux Correction)
+    for (int j = 1; j <= ny; ++j) {
+        for (int i = 1; i <= nx; ++i) {
+            int idx = mesh.cell_idx(i, j);
+            double u_e = fields.u[mesh.u_idx(i + 1, j)];
+            double u_w = fields.u[mesh.u_idx(i, j)];
+            double v_n = fields.v[mesh.v_idx(i, j + 1)];
+            double v_s = fields.v[mesh.v_idx(i, j)];
+
+            const auto& seg = interface_segments[idx];
+
+            // Coin Nord-Est (u_e > 0 et v_n > 0)
+            if (u_e > 0.0 && v_n > 0.0) {
+                double c_xmin = mesh.xv(i + 1) - u_e * dt;
+                double c_xmax = mesh.xv(i + 1);
+                double c_ymin = mesh.yv(j + 1) - v_n * dt;
+                double c_ymax = mesh.yv(j + 1);
+                double v_corner = InterfaceReconstruction::cut_box_area(c_xmin, c_xmax, c_ymin, c_ymax,
+                                                                        seg.nx, seg.ny, seg.alpha);
+                f_vol_x[mesh.cell_idx(i + 1, j)] -= 0.5 * v_corner;
+                f_vol_y[mesh.cell_idx(i, j + 1)] -= 0.5 * v_corner;
+            }
+
+            // Coin Nord-Ouest (u_w < 0 et v_n > 0)
+            if (u_w < 0.0 && v_n > 0.0) {
+                double c_xmin = mesh.xv(i);
+                double c_xmax = mesh.xv(i) - u_w * dt;
+                double c_ymin = mesh.yv(j + 1) - v_n * dt;
+                double c_ymax = mesh.yv(j + 1);
+                double v_corner = InterfaceReconstruction::cut_box_area(c_xmin, c_xmax, c_ymin, c_ymax,
+                                                                        seg.nx, seg.ny, seg.alpha);
+                f_vol_x[mesh.cell_idx(i, j)] += 0.5 * v_corner;
+                f_vol_y[mesh.cell_idx(i, j + 1)] -= 0.5 * v_corner;
+            }
+
+            // Coin Sud-Est (u_e > 0 et v_s < 0)
+            if (u_e > 0.0 && v_s < 0.0) {
+                double c_xmin = mesh.xv(i + 1) - u_e * dt;
+                double c_xmax = mesh.xv(i + 1);
+                double c_ymin = mesh.yv(j);
+                double c_ymax = mesh.yv(j) - v_s * dt;
+                double v_corner = InterfaceReconstruction::cut_box_area(c_xmin, c_xmax, c_ymin, c_ymax,
+                                                                        seg.nx, seg.ny, seg.alpha);
+                f_vol_x[mesh.cell_idx(i + 1, j)] -= 0.5 * v_corner;
+                f_vol_y[mesh.cell_idx(i, j)] += 0.5 * v_corner;
+            }
+
+            // Coin Sud-Ouest (u_w < 0 et v_s < 0)
+            if (u_w < 0.0 && v_s < 0.0) {
+                double c_xmin = mesh.xv(i);
+                double c_xmax = mesh.xv(i) - u_w * dt;
+                double c_ymin = mesh.yv(j);
+                double c_ymax = mesh.yv(j) - v_s * dt;
+                double v_corner = InterfaceReconstruction::cut_box_area(c_xmin, c_xmax, c_ymin, c_ymax,
+                                                                        seg.nx, seg.ny, seg.alpha);
+                f_vol_x[mesh.cell_idx(i, j)] += 0.5 * v_corner;
+                f_vol_y[mesh.cell_idx(i, j)] += 0.5 * v_corner;
+            }
+        }
+    }
+
+    // 4. Limitation locale pour garantir la bornitude stricte 0 <= C <= 1 sans écrêtage artificiel
+    for (int j = 1; j <= ny; ++j) {
+        for (int i = 1; i <= nx; ++i) {
+            int idx = mesh.cell_idx(i, j);
+            double vol_fluid = fields.C[idx] * cell_area;
+
+            double f_out_x = std::max(0.0, f_vol_x[mesh.cell_idx(i + 1, j)]) + std::max(0.0, -f_vol_x[mesh.cell_idx(i, j)]);
+            double f_out_y = std::max(0.0, f_vol_y[mesh.cell_idx(i, j + 1)]) + std::max(0.0, -f_vol_y[mesh.cell_idx(i, j)]);
+            double total_out = f_out_x + f_out_y;
+
+            if (total_out > vol_fluid && total_out > 1.0e-14) {
+                double scale = vol_fluid / total_out;
+                if (f_vol_x[mesh.cell_idx(i + 1, j)] > 0.0) f_vol_x[mesh.cell_idx(i + 1, j)] *= scale;
+                if (f_vol_x[mesh.cell_idx(i, j)] < 0.0)     f_vol_x[mesh.cell_idx(i, j)] *= scale;
+                if (f_vol_y[mesh.cell_idx(i, j + 1)] > 0.0) f_vol_y[mesh.cell_idx(i, j + 1)] *= scale;
+                if (f_vol_y[mesh.cell_idx(i, j)] < 0.0)     f_vol_y[mesh.cell_idx(i, j)] *= scale;
+            }
+        }
+    }
+
+    // 5. Mise à jour unsplit multidimensionnelle avec terme de divergence
+    std::vector<double> C_new = fields.C;
+    for (int j = 1; j <= ny; ++j) {
+        for (int i = 1; i <= nx; ++i) {
+            int idx = mesh.cell_idx(i, j);
+            double fx_in  = f_vol_x[mesh.cell_idx(i, j)];
+            double fx_out = f_vol_x[mesh.cell_idx(i + 1, j)];
+            double fy_in  = f_vol_y[mesh.cell_idx(i, j)];
+            double fy_out = f_vol_y[mesh.cell_idx(i, j + 1)];
+
+            double div_u = (fields.u[mesh.u_idx(i + 1, j)] - fields.u[mesh.u_idx(i, j)]) / dx +
+                           (fields.v[mesh.v_idx(i, j + 1)] - fields.v[mesh.v_idx(i, j)]) / dy;
+
+            C_new[idx] = fields.C[idx] - (1.0 / cell_area) * ((fx_out - fx_in) + (fy_out - fy_in)) + dt * fields.C[idx] * div_u;
+            C_new[idx] = std::clamp(C_new[idx], 0.0, 1.0);
+        }
+    }
+
+    fields.C = C_new;
 }
 
 } // namespace covof

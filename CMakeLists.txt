@@ -23,6 +23,7 @@ set(SOURCES
     src/CSRMatrix.cpp
     src/Preconditioner.cpp
     src/LinearSolver.cpp
+    src/InterfaceReconstruction.cpp
     src/InterfaceTracker.cpp
     src/NavierStokesSolver.cpp
     src/VTKWriter.cpp

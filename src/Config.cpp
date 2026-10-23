@@ -360,7 +360,21 @@ bool Config::load_from_json(const std::string& filepath) {
         output.write_csv_history = get_bool(out_block, "write_csv_history", output.write_csv_history);
     }
 
-    // 8. Obstacles immergés (Pénalisation de Brinkman)
+    // 8. Capture d'interface et transport VOF
+    std::string vof_block = extract_value(json, "vof");
+    // Évaluation de la condition de contrôle
+    if (!vof_block.empty()) {
+        // Calcul et assignation numérique
+        vof.reconstruction_method = get_string(vof_block, "reconstruction_method", vof.reconstruction_method);
+        // Calcul et assignation numérique
+        vof.advection_method      = get_string(vof_block, "advection_method", vof.advection_method);
+        // Calcul et assignation numérique
+        vof.tvd_limiter           = get_string(vof_block, "tvd_limiter", vof.tvd_limiter);
+        // Calcul et assignation numérique
+        vof.cfl_vof               = get_double(vof_block, "cfl_vof", vof.cfl_vof);
+    }
+
+    // 9. Obstacles immergés (Pénalisation de Brinkman)
     obstacles.clear();
     // Déclaration de variable typée
     std::string obs_array = extract_value(json, "obstacles");
@@ -436,7 +450,10 @@ void Config::print() const {
         // Calcul et assignation numérique
         std::cout << " Fluide 2 : rho=" << fluid2.rho << " kg/m3, mu=" << fluid2.mu << " Pa.s\n"
                   // Calcul et assignation numérique
-                  << " Tension superficielle sigma = " << sigma << " N/m\n";
+                  << " Tension superficielle sigma = " << sigma << " N/m\n"
+                  << " VOF : Reconstruction=" << vof.reconstruction_method 
+                  << " | Advection=" << vof.advection_method 
+                  << " | Limiteur=" << vof.tvd_limiter << "\n";
     }
     // Calcul et assignation numérique
     std::cout << " Gravite : g = (" << gx << ", " << gy << ") m/s^2\n"

@@ -34,9 +34,13 @@ Le solveur intègre une formulation **Matrix-Free sans allocation dynamique dans
   * *Lagrangien Augmenté* avec pénalisation de divergence $r_{\text{al}} \nabla(\nabla \cdot \mathbf{u})$ et actualisation d'Uzawa pour satisfaire la condition d'incompressibilité à précision machine.
   * *Formulation Monolithique* couplée intégrant directement le gradient de pression discret.
 * **Hydrodynamique Diphasique (Volume-Of-Fluid - VOF)** :
-  * Transport de fraction volumique $C \in [0, 1]$ par schéma haute résolution **TVD Superbee** garantissant la stricte conservation de masse et la netteté des interfaces sans diffusion numérique parasite.
-  * Modélisation de la tension superficielle par la méthode **CSF (Continuum Surface Force)** de Brackbill et al.
-  * Calcul direct des normales et de la courbure locale d'interface par gradients centrés.
+  * **Reconstruction géométrique d'interface** : **SLIC** (ordre 1 cartésien), **PLIC** (ordre 2 linéaire continu, Youngs / Scardovelli & Zaleski), **LVIRA** (moindres carrés continus par section dorée), **ELVIRA** (sélection optimale de fonctions de hauteur discrètes, Pilliod & Puckett). Découpage polygonal exact par algorithme de **Sutherland-Hodgman** et formule des lacets de Gauss.
+  * **Algorithmes d'advection VOF configurables** :
+    * **VOF-TVD** : transport algébrique haute résolution compressif.
+    * **CIAM (Calcul d'Interface Affine par Morceaux)** : transport géométrique directionnel à découpage de Strang.
+    * **Weymouth & Yue (2010)** : transport géométrique multidimensionnel non découplé avec correction de coin $V_{xy}$ et préservation stricte de la bornitude $C \in [0, 1]$.
+  * **Catalogue complet de limiteurs TVD / NVD** : **Superbee**, **Van Leer**, **Minmod**, **MUSCL**, **HRIC** (High-Resolution Interface Capturing).
+  * Modélisation de la tension superficielle par la méthode **CSF (Continuum Surface Force)** de Brackbill et al. avec formulation **Balanced-Force** supprimant les courants parasites.
 * **Thermique et Convection Naturelle** :
   * Équation de transport de l'énergie thermique (diffusion + advection).
   * Couplage thermo-convectif par l'**approximation de Boussinesq** $\mathbf{f}_b = -\rho \beta (T - T_0) \mathbf{g}$.

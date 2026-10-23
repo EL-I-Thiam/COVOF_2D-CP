@@ -81,6 +81,9 @@ public:
     SolverOptions solver;
     OutputConfig output;
 
+    // Capture d'interface et transport VOF
+    VofConfig vof;
+
     /**
      * @brief Charge la configuration depuis un fichier JSON
      * @param filepath Chemin vers le fichier .json du cas test

@@ -101,7 +101,9 @@ public:
     inline double xc(int i) const { return (i_offset + i - 0.5) * dx; }
     inline double yc(int j) const { return (j_offset + j - 0.5) * dy; }
     inline double xu(int i) const { return (i_offset + i - 1.0) * dx; }
+    inline double xv(int i) const { return xu(i); } ///< Coordonnée X de la face verticale / sommet
     inline double yv(int j) const { return (j_offset + j - 1.0) * dy; }
+    inline double yu(int j) const { return yv(j); } ///< Coordonnée Y de la face horizontale / sommet
 };
 
 } // namespace covof
