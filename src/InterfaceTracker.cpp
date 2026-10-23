@@ -600,14 +600,13 @@ void InterfaceTracker::advect_weymouth_yue(const Mesh2D& mesh, FlowFields& field
 
     ReconstructionMethod recon_method = InterfaceReconstruction::parse_reconstruction_method(vof_cfg.reconstruction_method);
 
-    // 1. Unique étape de reconstruction géométrique sur le champ initial C^n
+    // 1. Reconstruction geometrique sur le champ initial C^n
     InterfaceReconstruction::reconstruct(recon_method, mesh, fields.C, interface_segments);
 
-    // 2. Calcul des flux 1D de faces géométriques
+    // 2. Calcul des flux 1D de faces geometriques
     std::vector<double> f_vol_x((nx + 2) * (ny + 2), 0.0);
     std::vector<double> f_vol_y((nx + 2) * (ny + 2), 0.0);
 
-    // Faces X
     for (int j = 1; j <= ny; ++j) {
         for (int i = 1; i <= nx + 1; ++i) {
             double u_face = fields.u[mesh.u_idx(i, j)];
@@ -632,7 +631,6 @@ void InterfaceTracker::advect_weymouth_yue(const Mesh2D& mesh, FlowFields& field
         }
     }
 
-    // Faces Y
     for (int j = 1; j <= ny + 1; ++j) {
         for (int i = 1; i <= nx; ++i) {
             double v_face = fields.v[mesh.v_idx(i, j)];
@@ -657,7 +655,7 @@ void InterfaceTracker::advect_weymouth_yue(const Mesh2D& mesh, FlowFields& field
         }
     }
 
-    // 3. Correction multidimensionnelle des flux de coin (Corner Flux Correction)
+    // 3. Correction multidimensionnelle de coin de Weymouth & Yue
     for (int j = 1; j <= ny; ++j) {
         for (int i = 1; i <= nx; ++i) {
             int idx = mesh.cell_idx(i, j);
@@ -665,10 +663,8 @@ void InterfaceTracker::advect_weymouth_yue(const Mesh2D& mesh, FlowFields& field
             double u_w = fields.u[mesh.u_idx(i, j)];
             double v_n = fields.v[mesh.v_idx(i, j + 1)];
             double v_s = fields.v[mesh.v_idx(i, j)];
-
             const auto& seg = interface_segments[idx];
 
-            // Coin Nord-Est (u_e > 0 et v_n > 0)
             if (u_e > 0.0 && v_n > 0.0) {
                 double c_xmin = mesh.xv(i + 1) - u_e * dt;
                 double c_xmax = mesh.xv(i + 1);
@@ -679,8 +675,6 @@ void InterfaceTracker::advect_weymouth_yue(const Mesh2D& mesh, FlowFields& field
                 f_vol_x[mesh.cell_idx(i + 1, j)] -= 0.5 * v_corner;
                 f_vol_y[mesh.cell_idx(i, j + 1)] -= 0.5 * v_corner;
             }
-
-            // Coin Nord-Ouest (u_w < 0 et v_n > 0)
             if (u_w < 0.0 && v_n > 0.0) {
                 double c_xmin = mesh.xv(i);
                 double c_xmax = mesh.xv(i) - u_w * dt;
@@ -691,8 +685,6 @@ void InterfaceTracker::advect_weymouth_yue(const Mesh2D& mesh, FlowFields& field
                 f_vol_x[mesh.cell_idx(i, j)] += 0.5 * v_corner;
                 f_vol_y[mesh.cell_idx(i, j + 1)] -= 0.5 * v_corner;
             }
-
-            // Coin Sud-Est (u_e > 0 et v_s < 0)
             if (u_e > 0.0 && v_s < 0.0) {
                 double c_xmin = mesh.xv(i + 1) - u_e * dt;
                 double c_xmax = mesh.xv(i + 1);
@@ -703,8 +695,6 @@ void InterfaceTracker::advect_weymouth_yue(const Mesh2D& mesh, FlowFields& field
                 f_vol_x[mesh.cell_idx(i + 1, j)] -= 0.5 * v_corner;
                 f_vol_y[mesh.cell_idx(i, j)] += 0.5 * v_corner;
             }
-
-            // Coin Sud-Ouest (u_w < 0 et v_s < 0)
             if (u_w < 0.0 && v_s < 0.0) {
                 double c_xmin = mesh.xv(i);
                 double c_xmax = mesh.xv(i) - u_w * dt;
@@ -718,27 +708,72 @@ void InterfaceTracker::advect_weymouth_yue(const Mesh2D& mesh, FlowFields& field
         }
     }
 
-    // 4. Limitation locale pour garantir la bornitude stricte 0 <= C <= 1 sans écrêtage artificiel
+    // 4. Limitation conservative de Weymouth & Yue garantissant 0 <= C <= 1 et conservation de masse exacte
+    std::vector<double> scale_out((nx + 2) * (ny + 2), 1.0);
+    std::vector<double> scale_in((nx + 2) * (ny + 2), 1.0);
+
     for (int j = 1; j <= ny; ++j) {
         for (int i = 1; i <= nx; ++i) {
             int idx = mesh.cell_idx(i, j);
-            double vol_fluid = fields.C[idx] * cell_area;
+            double v_fluid = fields.C[idx] * cell_area;
+            double v_empty = (1.0 - fields.C[idx]) * cell_area;
 
-            double f_out_x = std::max(0.0, f_vol_x[mesh.cell_idx(i + 1, j)]) + std::max(0.0, -f_vol_x[mesh.cell_idx(i, j)]);
-            double f_out_y = std::max(0.0, f_vol_y[mesh.cell_idx(i, j + 1)]) + std::max(0.0, -f_vol_y[mesh.cell_idx(i, j)]);
-            double total_out = f_out_x + f_out_y;
+            double f_out = std::max(0.0, f_vol_x[mesh.cell_idx(i + 1, j)]) +
+                           std::max(0.0, -f_vol_x[mesh.cell_idx(i, j)]) +
+                           std::max(0.0, f_vol_y[mesh.cell_idx(i, j + 1)]) +
+                           std::max(0.0, -f_vol_y[mesh.cell_idx(i, j)]);
 
-            if (total_out > vol_fluid && total_out > 1.0e-14) {
-                double scale = vol_fluid / total_out;
-                if (f_vol_x[mesh.cell_idx(i + 1, j)] > 0.0) f_vol_x[mesh.cell_idx(i + 1, j)] *= scale;
-                if (f_vol_x[mesh.cell_idx(i, j)] < 0.0)     f_vol_x[mesh.cell_idx(i, j)] *= scale;
-                if (f_vol_y[mesh.cell_idx(i, j + 1)] > 0.0) f_vol_y[mesh.cell_idx(i, j + 1)] *= scale;
-                if (f_vol_y[mesh.cell_idx(i, j)] < 0.0)     f_vol_y[mesh.cell_idx(i, j)] *= scale;
+            double f_in = std::max(0.0, -f_vol_x[mesh.cell_idx(i + 1, j)]) +
+                          std::max(0.0, f_vol_x[mesh.cell_idx(i, j)]) +
+                          std::max(0.0, -f_vol_y[mesh.cell_idx(i, j + 1)]) +
+                          std::max(0.0, f_vol_y[mesh.cell_idx(i, j)]);
+
+            if (f_out > v_fluid && f_out > 1.0e-14) {
+                scale_out[idx] = v_fluid / f_out;
+            }
+            if (f_in > v_empty && f_in > 1.0e-14) {
+                scale_in[idx] = v_empty / f_in;
             }
         }
     }
 
-    // 5. Mise à jour unsplit multidimensionnelle avec terme de divergence
+    for (int j = 1; j <= ny; ++j) {
+        for (int i = 1; i <= nx + 1; ++i) {
+            int c_idx = mesh.cell_idx(i, j);
+            double f = f_vol_x[c_idx];
+            if (f > 0.0) {
+                int donor = mesh.cell_idx(i - 1, j);
+                int receiver = mesh.cell_idx(i, j);
+                double s = std::min(scale_out[donor], scale_in[receiver]);
+                f_vol_x[c_idx] = f * s;
+            } else if (f < 0.0) {
+                int donor = mesh.cell_idx(i, j);
+                int receiver = mesh.cell_idx(i - 1, j);
+                double s = std::min(scale_out[donor], scale_in[receiver]);
+                f_vol_x[c_idx] = f * s;
+            }
+        }
+    }
+
+    for (int j = 1; j <= ny + 1; ++j) {
+        for (int i = 1; i <= nx; ++i) {
+            int c_idx = mesh.cell_idx(i, j);
+            double f = f_vol_y[c_idx];
+            if (f > 0.0) {
+                int donor = mesh.cell_idx(i, j - 1);
+                int receiver = mesh.cell_idx(i, j);
+                double s = std::min(scale_out[donor], scale_in[receiver]);
+                f_vol_y[c_idx] = f * s;
+            } else if (f < 0.0) {
+                int donor = mesh.cell_idx(i, j);
+                int receiver = mesh.cell_idx(i, j - 1);
+                double s = std::min(scale_out[donor], scale_in[receiver]);
+                f_vol_y[c_idx] = f * s;
+            }
+        }
+    }
+
+    // 5. Mise a jour conservative exacte
     std::vector<double> C_new = fields.C;
     for (int j = 1; j <= ny; ++j) {
         for (int i = 1; i <= nx; ++i) {
@@ -748,10 +783,7 @@ void InterfaceTracker::advect_weymouth_yue(const Mesh2D& mesh, FlowFields& field
             double fy_in  = f_vol_y[mesh.cell_idx(i, j)];
             double fy_out = f_vol_y[mesh.cell_idx(i, j + 1)];
 
-            double div_u = (fields.u[mesh.u_idx(i + 1, j)] - fields.u[mesh.u_idx(i, j)]) / dx +
-                           (fields.v[mesh.v_idx(i, j + 1)] - fields.v[mesh.v_idx(i, j)]) / dy;
-
-            C_new[idx] = fields.C[idx] - (1.0 / cell_area) * ((fx_out - fx_in) + (fy_out - fy_in)) + dt * fields.C[idx] * div_u;
+            C_new[idx] = fields.C[idx] - (1.0 / cell_area) * ((fx_out - fx_in) + (fy_out - fy_in));
             C_new[idx] = std::clamp(C_new[idx], 0.0, 1.0);
         }
     }

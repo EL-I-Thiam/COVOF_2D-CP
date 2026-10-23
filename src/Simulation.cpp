@@ -724,40 +724,91 @@ void Simulation::run_vortex_advection() {
         }
     }
 
-    // Calcul de l'erreur L1 entre C_initial et C(T)
+    // Calcul des erreurs L1, L2, Linf et du bilan de masse entre C_initial et C(T)
     double local_err_l1 = 0.0;
     // Déclaration de variable typée
+    double local_err_l2 = 0.0;
+    // Déclaration de variable typée
+    double local_err_linf = 0.0;
+    // Déclaration de variable typée
+    double local_mass_init = 0.0;
+    // Déclaration de variable typée
+    double local_mass_final = 0.0;
+    // Déclaration de variable typée
     double local_cells = mesh.nx_local * mesh.ny_local;
+    // Déclaration de variable typée
+    double cell_vol = mesh.dx * mesh.dy;
+
     // Boucle spatiale sur les cellules locales selon l'axe vertical Y (ordonnées)
     for (int j = 1; j <= mesh.ny_local; ++j) {
         // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
         for (int i = 1; i <= mesh.nx_local; ++i) {
+            // Déclaration de variable typée
+            int idx = mesh.cell_idx(i, j);
+            // Déclaration de variable typée
+            double diff = std::abs(fields.C[idx] - C_initial[idx]);
             // Calcul et assignation numérique
-            local_err_l1 += std::abs(fields.C[mesh.cell_idx(i, j)] - C_initial[mesh.cell_idx(i, j)]);
+            local_err_l1 += diff;
+            // Calcul et assignation numérique
+            local_err_l2 += diff * diff;
+            // Évaluation de la condition de contrôle
+            if (diff > local_err_linf) local_err_linf = diff;
+            // Calcul et assignation numérique
+            local_mass_init += C_initial[idx] * cell_vol;
+            // Calcul et assignation numérique
+            local_mass_final += fields.C[idx] * cell_vol;
         }
     }
-    // Déclaration de variable typée
+
+    // Réduction parallèle MPI globale de la somme de l'erreur L1
     double global_err_l1 = MpiComm::global_sum(mesh, local_err_l1);
-    // Déclaration de variable typée
+    // Réduction parallèle MPI globale de la somme de l'erreur L2 au carré
+    double global_err_l2 = MpiComm::global_sum(mesh, local_err_l2);
+    // Réduction parallèle MPI globale de l'erreur maximale absolue Linf
+    double global_err_linf = MpiComm::global_max(mesh, local_err_linf);
+    // Réduction parallèle MPI globale de la masse totale initiale
+    double global_mass_init = MpiComm::global_sum(mesh, local_mass_init);
+    // Réduction parallèle MPI globale de la masse totale finale
+    double global_mass_final = MpiComm::global_sum(mesh, local_mass_final);
+    // Réduction parallèle MPI globale du nombre de cellules
     double global_cells = MpiComm::global_sum(mesh, local_cells);
-    // Déclaration de variable typée
+
+    // Calcul de l'erreur moyenne normalisée L1
     double err_l1 = global_err_l1 / global_cells;
+    // Calcul de l'erreur quadratique moyenne normalisée L2
+    double err_l2 = std::sqrt(global_err_l2 / global_cells);
+    // Erreur maximale locale Linf
+    double err_linf = global_err_linf;
+    // Taux de conservation relative de la masse du fluide
+    double mass_conservation = (global_mass_init > 1.0e-14) ? (global_mass_final / global_mass_init) : 1.0;
 
     // Évaluation de la condition de contrôle
     if (mesh.rank == 0) {
+        // Affichage console formaté du résultat de vérification
         std::cout << "\n>>> RESULTAT DU CAS 3.19 : ADVECTION VORTEX COVOF 2D <<<\n"
-                  << "  Maillage : " << nx << " x " << ny << "\n"
-                  << "  Erreur L1 : " << std::scientific << std::setprecision(5) << err_l1 << "\n"
-                  // Calcul et assignation numérique
+                  << "  Methode Advection  : " << config.vof.advection_method << "\n"
+                  << "  Reconstruction     : " << config.vof.reconstruction_method << "\n"
+                  << "  Limiteur TVD/NVD   : " << config.vof.tvd_limiter << "\n"
+                  << "  Maillage           : " << nx << " x " << ny << "\n"
+                  << "  Erreur L1          : " << std::scientific << std::setprecision(5) << err_l1 << "\n"
+                  << "  Erreur L2          : " << std::scientific << std::setprecision(5) << err_l2 << "\n"
+                  << "  Erreur Linf        : " << std::scientific << std::setprecision(5) << err_linf << "\n"
+                  << "  Conservation Masse : " << std::fixed << std::setprecision(5) << (mass_conservation * 100.0) << " %\n"
                   << "========================================================\n";
 
         // Déclaration de variable typée
         std::string err_file = config.output.output_dir + "/vortex_error.csv";
+        // Ouverture du flux d'écriture fichier
         std::ofstream ofs(err_file);
         // Évaluation de la condition de contrôle
         if (ofs.is_open()) {
-            ofs << "nx,ny,dt,T,err_l1\n"
-                << nx << "," << ny << "," << dt << "," << T_period << "," << err_l1 << "\n";
+            // Écriture de l'en-tête CSV enrichi avec toutes les métriques et métadonnées d'advection
+            ofs << "nx,ny,dt,T,advection,reconstruction,limiter,err_l1,err_l2,err_linf,mass_init,mass_final,mass_conservation\n"
+                << nx << "," << ny << "," << dt << "," << T_period << ","
+                << config.vof.advection_method << "," << config.vof.reconstruction_method << "," << config.vof.tvd_limiter << ","
+                << err_l1 << "," << err_l2 << "," << err_linf << ","
+                << global_mass_init << "," << global_mass_final << "," << mass_conservation << "\n";
+            // Fermeture du fichier de sortie
             ofs.close();
         }
     }

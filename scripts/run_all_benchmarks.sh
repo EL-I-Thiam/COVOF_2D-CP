@@ -50,8 +50,17 @@ rm -rf output_poiseuille_variable_viscosity/*
 mpirun -np $NP bin/covof2d cases/poiseuille_variable_viscosity.json
 
 echo ">>> [5/13] Cas 3.19 : Advection vortex avec cisaillement..."
+echo "    -> [5.1/13] VOF-TVD Superbee (Référence)..."
 rm -rf output_vortex_shear/*
 mpirun -np $NP bin/covof2d cases/vortex_shear_advection.json
+
+echo "    -> [5.2/13] Géométrique CIAM + PLIC..."
+rm -rf output_vortex_shear_ciam_plic/*
+mpirun -np $NP bin/covof2d cases/vortex_shear_ciam_plic.json
+
+echo "    -> [5.3/13] Multidimensionnel Weymouth & Yue + ELVIRA..."
+rm -rf output_vortex_shear_weymouth_yue_elvira/*
+mpirun -np $NP bin/covof2d cases/vortex_shear_weymouth_yue_elvira.json
 
 # ==============================================================================
 # CHAPITRE 4 : ÉCOULEMENTS ISOTHERMES MONOPHASIQUES LAMINAIRES
