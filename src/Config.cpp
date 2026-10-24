@@ -291,8 +291,8 @@ bool Config::load_from_json(const std::string& filepath) {
         std::string type_str = get_string(ic_block, "type", "SINGLE_PHASE");
         // Évaluation de la condition de contrôle
         if (type_str == "DROPLET") init_cond.type = InitialConditionType::DROPLET;
-        // Branche alternative conditionnelle
-        else if (type_str == "BUBBLE") init_cond.type = InitialConditionType::BUBBLE;
+        // Branche alternative conditionnelle pour bulle ou cylindre immergé
+        else if (type_str == "BUBBLE" || type_str == "CYLINDER") init_cond.type = InitialConditionType::BUBBLE;
         // Branche alternative conditionnelle
         else if (type_str == "DAM_BREAK") init_cond.type = InitialConditionType::DAM_BREAK;
         // Branche alternative conditionnelle
