@@ -161,7 +161,7 @@ void InterfaceTracker::update_physical_properties(const Mesh2D& mesh, FlowFields
                 // Déclaration de variable typée
                 double z = y - visc_e;
                 // Déclaration de variable typée
-                double mu_val = visc_mu0 * std::exp(visc_a * (z * z) / (visc_e * visc_e));
+                double mu_val = visc_mu0 * std::exp(-visc_a * z / visc_e);
                 // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
                 for (int i = 0; i <= nx + 1; ++i) {
                     // Calcul de la résolution géométrique de cellule
@@ -175,7 +175,7 @@ void InterfaceTracker::update_physical_properties(const Mesh2D& mesh, FlowFields
                 // Déclaration de variable typée
                 double z = y - visc_e;
                 // Déclaration de variable typée
-                double mu_node_val = visc_mu0 * std::exp(visc_a * (z * z) / (visc_e * visc_e));
+                double mu_node_val = visc_mu0 * std::exp(-visc_a * z / visc_e);
                 // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
                 for (int i = 0; i <= nx + 1; ++i) {
                     // Calcul de la résolution géométrique de cellule
