@@ -419,6 +419,7 @@ void InterfaceTracker::advect_tvd(const Mesh2D& mesh, FlowFields& fields, double
             double c_L = fields.C[mesh.cell_idx(i - 1, j)];
             double c_R = fields.C[mesh.cell_idx(i, j)];
 
+            double cfl_x = std::min(1.0, std::abs(u_face) * dt / dx);
             if (u_face >= 0.0) {
                 int i_up = std::max(0, i - 2);
                 double c_U = fields.C[mesh.cell_idx(i_up, j)];
@@ -426,7 +427,7 @@ void InterfaceTracker::advect_tvd(const Mesh2D& mesh, FlowFields& fields, double
                 double dC_loc = c_R - c_L;
                 double r = (std::abs(dC_loc) > 1.0e-12) ? dC_up / dC_loc : 0.0;
                 double phi = InterfaceReconstruction::evaluate_limiter(limiter, r, c_L, c_U, c_R);
-                flux_x[mesh.cell_idx(i, j)] = u_face * (c_L + 0.5 * phi * (1.0 - u_face * dt / dx) * dC_loc);
+                flux_x[mesh.cell_idx(i, j)] = u_face * (c_L + 0.5 * phi * (1.0 - cfl_x) * dC_loc);
             } else {
                 int i_down = std::min(nx + 1, i + 1);
                 double c_U = fields.C[mesh.cell_idx(i_down, j)];
@@ -434,7 +435,7 @@ void InterfaceTracker::advect_tvd(const Mesh2D& mesh, FlowFields& fields, double
                 double dC_loc = c_R - c_L;
                 double r = (std::abs(dC_loc) > 1.0e-12) ? dC_up / dC_loc : 0.0;
                 double phi = InterfaceReconstruction::evaluate_limiter(limiter, r, c_R, c_U, c_L);
-                flux_x[mesh.cell_idx(i, j)] = u_face * (c_R - 0.5 * phi * (1.0 + u_face * dt / dx) * dC_loc);
+                flux_x[mesh.cell_idx(i, j)] = u_face * (c_R - 0.5 * phi * (1.0 - cfl_x) * dC_loc);
             }
         }
     }
@@ -446,6 +447,7 @@ void InterfaceTracker::advect_tvd(const Mesh2D& mesh, FlowFields& fields, double
             double v_face = fields.v[mesh.v_idx(i, j)];
             double c_B = fields.C[mesh.cell_idx(i, j - 1)];
             double c_T = fields.C[mesh.cell_idx(i, j)];
+            double cfl_y = std::min(1.0, std::abs(v_face) * dt / dy);
 
             if (v_face >= 0.0) {
                 int j_up = std::max(0, j - 2);
@@ -454,7 +456,7 @@ void InterfaceTracker::advect_tvd(const Mesh2D& mesh, FlowFields& fields, double
                 double dC_loc = c_T - c_B;
                 double r = (std::abs(dC_loc) > 1.0e-12) ? dC_up / dC_loc : 0.0;
                 double phi = InterfaceReconstruction::evaluate_limiter(limiter, r, c_B, c_U, c_T);
-                flux_y[mesh.cell_idx(i, j)] = v_face * (c_B + 0.5 * phi * (1.0 - v_face * dt / dy) * dC_loc);
+                flux_y[mesh.cell_idx(i, j)] = v_face * (c_B + 0.5 * phi * (1.0 - cfl_y) * dC_loc);
             } else {
                 int j_down = std::min(ny + 1, j + 1);
                 double c_U = fields.C[mesh.cell_idx(i, j_down)];
@@ -462,7 +464,7 @@ void InterfaceTracker::advect_tvd(const Mesh2D& mesh, FlowFields& fields, double
                 double dC_loc = c_T - c_B;
                 double r = (std::abs(dC_loc) > 1.0e-12) ? dC_up / dC_loc : 0.0;
                 double phi = InterfaceReconstruction::evaluate_limiter(limiter, r, c_T, c_U, c_B);
-                flux_y[mesh.cell_idx(i, j)] = v_face * (c_T - 0.5 * phi * (1.0 + v_face * dt / dy) * dC_loc);
+                flux_y[mesh.cell_idx(i, j)] = v_face * (c_T - 0.5 * phi * (1.0 - cfl_y) * dC_loc);
             }
         }
     }

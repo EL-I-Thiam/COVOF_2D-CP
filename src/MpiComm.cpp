@@ -518,26 +518,25 @@ void MpiComm::apply_boundary_conditions(const Mesh2D& mesh, const DomainBC& bc, 
                 double half_w = (bc.top.jet_width > 0.0) ? 0.5 * bc.top.jet_width : 0.04;
                 // Évaluation de l'appartenance à l'injecteur
                 if (std::abs(x_c - xc) <= half_w) {
-                    // Évaluation de la condition de contrôle
+                    // Imposition de la vitesse d'injection (préservée pour la ligne diagonale lors de matvec)
                     if (!homogeneous) f.v[mesh.v_idx(i, ny + 1)] = v_top_val;
-                    // Calcul de la résolution géométrique de cellule
-                    f.v[mesh.v_idx(i, ny + 2)] = v_top_val;
-                    // Calcul de la résolution géométrique de cellule
-                    f.u[mesh.u_idx(i, ny + 1)] = 0.0;
+                    // Calcul de la cellule fantôme supérieure pour divergence nulle au bord
+                    f.v[mesh.v_idx(i, ny + 2)] = homogeneous ? 0.0 : v_top_val;
                     // Injection continue de liquide (Fluide 2 : C = 0)
                     f.C[mesh.cell_idx(i, ny + 1)] = 0.0;
                 } else {
                     // Calcul du débit de compensation d'échappement du gaz pour incompressibilité stricte
                     double v_out = -v_top_val * (2.0 * half_w) / (mesh.lx - 2.0 * half_w);
-                    // Évaluation de la condition de contrôle
+                    // Imposition de la vitesse d'évacuation (préservée pour la ligne diagonale lors de matvec)
                     if (!homogeneous) f.v[mesh.v_idx(i, ny + 1)] = v_out;
-                    // Calcul de la résolution géométrique de cellule
-                    f.v[mesh.v_idx(i, ny + 2)] = v_out;
-                    // Glissement libre tangentiel
-                    f.u[mesh.u_idx(i, ny + 1)] = f.u[mesh.u_idx(i, ny)];
+                    // Calcul de la cellule fantôme supérieure
+                    f.v[mesh.v_idx(i, ny + 2)] = homogeneous ? 0.0 : v_out;
                     // Évacuation du gaz par sortie libre Neumann
                     f.C[mesh.cell_idx(i, ny + 1)] = f.C[mesh.cell_idx(i, ny)];
                 }
+                // Condition tangentielle symétrique évaluée à l'abscisse exacte de la face u
+                f.u[mesh.u_idx(i, ny + 1)] = (std::abs(mesh.xu(i) - xc) <= half_w) ? 0.0 : f.u[mesh.u_idx(i, ny)];
+                if (i == nx) f.u[mesh.u_idx(nx + 1, ny + 1)] = f.u[mesh.u_idx(nx + 1, ny)];
             // Évaluation de la condition de contrôle standard
             } else if (bc.top.type == BCType::DIRICHLET) {
                 // Évaluation de la condition de contrôle
