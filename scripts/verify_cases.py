@@ -509,6 +509,28 @@ def verify_all():
             })
             print(f"      -> Erreur rel L2 Uc = {err_uc:.2e} ({err_uc*100:.3f}%), Yc = {err_yc:.2e} ({err_yc*100:.3f}%) [{status_cyl}]")
 
+    # [Benchmark Fluids 2021] Cas 3.2 : Atomisation d'une nappe liquide périodique (E_k normalisée)
+    sheet_csv = "output_liquid_sheet_ratio100/liquid_sheet_ratio100_history.csv"
+    if os.path.exists(sheet_csv):
+        print("[Bonus] Cas 3.2 : Atomisation nappe liquide (rho2/rho1 = 100, Fig. 5 Fluids 2021)...")
+        df_sheet = pd.read_csv(sheet_csv)
+        if len(df_sheet) > 5:
+            ke_sheet = df_sheet['kinetic_energy'].to_numpy()
+            ke_ratio_final = ke_sheet[-1] / ke_sheet[0]
+            vol_sheet = df_sheet['bubble_volume'].to_numpy()
+            vol_cons = (vol_sheet[-1] / vol_sheet[0]) * 100.0
+            status_sheet = "PASS" if (0.95 <= ke_ratio_final <= 1.05 and vol_cons >= 99.0) else "FAIL"
+            report_rows.append({
+                "Chapitre": "Fluids 2021 (Ratios 10^2)",
+                "Cas": "3.2 Nappe liquide (Atomisation)",
+                "Métrique": "Conservation E_k(tf)/E_k(0) & Vol",
+                "Cible de Référence Académique": "Ek/Ek0 in [0.98, 1.04] (Fig. 5b)",
+                "Valeur COVOF 2D": f"Ek/Ek0={ke_ratio_final:.4f}, Vol={vol_cons:.2f}%",
+                "Écart Relatif": f"+{(ke_ratio_final-1.0)*100:.2f}% (dev)",
+                "Statut": status_sheet
+            })
+            print(f"      -> Conservation Ek/Ek0 = {ke_ratio_final:.4f} (+{(ke_ratio_final-1.0)*100:.2f}%), Vol = {vol_cons:.2f}% [{status_sheet}]")
+
     # ==========================================================================
     # SYNTHÈSE GLOBALE ET EXPORT DU TABLEAU DE SYNTHESE
     # ==========================================================================

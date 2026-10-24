@@ -2,10 +2,11 @@
 
 Ce rapport présente la comparaison rigoureuse entre les résultats obtenus par **COVOF 2D** et les valeurs de référence publiées dans le **Cahier de Validation et Vérification CFD 2D**.
 
-| Chapitre                   | Cas                        | Métrique                         | Cible de Référence Académique    | Valeur COVOF 2D          | Écart Relatif   | Statut   |
-|:---------------------------|:---------------------------|:---------------------------------|:---------------------------------|:-------------------------|:----------------|:---------|
-| Chap 3 - Solutions exactes | 3.19 Vortex cisaillement   | Erreur L1 reconstitution (64x64) | 0.05759 (VOF-TVD)                | 0.05760                  | 0.02 %          | PASS     |
-| Fluids 2021 (Ratios 10^5)  | 3.1 Cylindre dense (Chute) | Erreur L2 relative Uc & Yc       | Err_rel2(Uc)=5.05e-5, Yc=8.41e-4 | Uc=1.27e-03, Yc=5.24e-04 | 0.127% / 0.052% | PASS     |
+| Chapitre                   | Cas                             | Métrique                          | Cible de Référence Académique    | Valeur COVOF 2D           | Écart Relatif   | Statut   |
+|:---------------------------|:--------------------------------|:----------------------------------|:---------------------------------|:--------------------------|:----------------|:---------|
+| Chap 3 - Solutions exactes | 3.19 Vortex cisaillement        | Erreur L1 reconstitution (64x64)  | 0.05759 (VOF-TVD)                | 0.05760                   | 0.02 %          | PASS     |
+| Fluids 2021 (Ratios 10^5)  | 3.1 Cylindre dense (Chute)      | Erreur L2 relative Uc & Yc        | Err_rel2(Uc)=5.05e-5, Yc=8.41e-4 | Uc=1.27e-03, Yc=5.24e-04  | 0.127% / 0.052% | PASS     |
+| Fluids 2021 (Ratios 10^2)  | 3.2 Nappe liquide (Atomisation) | Conservation E_k(tf)/E_k(0) & Vol | Ek/Ek0 in [0.98, 1.04] (Fig. 5b) | Ek/Ek0=1.0175, Vol=99.97% | +1.75% (dev)    | PASS     |
 
 ### Détails des Chapitres Traités :
 - **Chapitre 3** : Vérifications sur solutions exactes (Laplacien, Poiseuille stationnaire, Poiseuille Szymanski, Poiseuille viscosité variable exponentielle, Advection vortex avec cisaillement)

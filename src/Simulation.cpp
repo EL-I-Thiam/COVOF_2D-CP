@@ -77,6 +77,68 @@ bool Simulation::init(MPI_Comm comm, const std::string& config_file) {
         MpiComm::sync_u(mesh, fields.u);
     }
 
+    // Initialisation du champ de vitesse solénoïdal pour LIQUID_SHEET (Équations 17-18 Fluids 2021)
+    if (config.init_cond.type == InitialConditionType::LIQUID_SHEET) {
+        // Déclaration des variables physiques et géométriques
+        double y_c = (config.init_cond.center_y > 0.0) ? config.init_cond.center_y : 0.5 * mesh.ly;
+        // Déclaration de variable typée pour l'épaisseur de la nappe liquide
+        double delta = (config.init_cond.thickness > 0.0) ? config.init_cond.thickness : 0.0003;
+        // Déclaration de variable typée pour la longueur du domaine
+        double L = mesh.lx;
+        // Déclaration de variable typée pour le nombre d'onde
+        double k_pert = 2.0 * M_PI / L;
+        // Déclaration de variable typée pour l'amplitude de perturbation
+        double amp = 0.04;
+        // Facteur pour u assurant une divergence rigoureusement nulle (Eq. 17)
+        double factor_u = amp * (L / (2.0 * M_PI)) * (2.0 / delta);
+
+        // Composante horizontale u sur les faces décalées MAC en x
+        int u_nx = mesh.nx_local + (mesh.is_boundary_right ? 1 : 0);
+        // Boucle spatiale sur les cellules locales selon l'axe vertical Y (ordonnées)
+        for (int j = 1; j <= mesh.ny_local; ++j) {
+            // Déclaration de variable typée
+            double y = mesh.yc(j);
+            // Déclaration de variable typée pour l'écart au centre de la nappe
+            double dy_c = y - y_c;
+            // Signe pour la divergence solénoïdale
+            double sgn_y = (dy_c > 1.0e-12) ? 1.0 : ((dy_c < -1.0e-12) ? -1.0 : 0.0);
+            // Décroissance exponentielle symétrique par rapport au plan médian
+            double exp_decay = std::exp(-2.0 * std::abs(dy_c) / delta);
+            // Boucle spatiale sur les faces u selon l'axe horizontal X
+            for (int i = 1; i <= u_nx; ++i) {
+                // Déclaration de variable typée
+                double x = mesh.xu(i);
+                // Vitesse moyenne convective A : 30 m/s dans le gaz, 2 m/s dans le liquide
+                double c_u = 0.5 * (fields.C[mesh.cell_idx(i - 1, j)] + fields.C[mesh.cell_idx(i, j)]);
+                // Interpolation de la vitesse moyenne de base A selon la présence de gaz/liquide
+                double A_val = c_u * 30.0 + (1.0 - c_u) * 2.0;
+                // Calcul et assignation numérique de u selon l'Équation 17
+                fields.u[mesh.u_idx(i, j)] = A_val - sgn_y * factor_u * std::cos(k_pert * x) * exp_decay;
+            }
+        }
+
+        // Composante verticale v sur les faces décalées MAC en y
+        int v_ny = mesh.ny_local + (mesh.is_boundary_top ? 1 : 0);
+        // Boucle spatiale sur les faces v selon l'axe vertical Y
+        for (int j = 1; j <= v_ny; ++j) {
+            // Déclaration de variable typée
+            double y = mesh.yv(j);
+            // Déclaration de variable typée pour l'écart au centre de la nappe
+            double dy_c = y - y_c;
+            // Décroissance exponentielle symétrique par rapport au plan médian
+            double exp_decay = std::exp(-2.0 * std::abs(dy_c) / delta);
+            // Boucle spatiale sur les cellules locales selon l'axe horizontal X
+            for (int i = 1; i <= mesh.nx_local; ++i) {
+                // Déclaration de variable typée
+                double x = mesh.xc(i);
+                // Calcul et assignation numérique de v selon l'Équation 17
+                fields.v[mesh.v_idx(i, j)] = amp * std::sin(k_pert * x) * exp_decay;
+            }
+        }
+        MpiComm::sync_u(mesh, fields.u);
+        MpiComm::sync_v(mesh, fields.v);
+    }
+
     // Initialisation du champ thermique si activé
     if (config.enable_energy) {
         // Boucle spatiale sur les cellules locales selon l'axe vertical Y (ordonnées)

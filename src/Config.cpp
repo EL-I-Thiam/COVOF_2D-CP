@@ -295,6 +295,8 @@ bool Config::load_from_json(const std::string& filepath) {
         else if (type_str == "BUBBLE" || type_str == "CYLINDER") init_cond.type = InitialConditionType::BUBBLE;
         // Branche alternative conditionnelle
         else if (type_str == "DAM_BREAK") init_cond.type = InitialConditionType::DAM_BREAK;
+        // Branche alternative conditionnelle pour nappe liquide (Cas 3.2 Fluids 2021)
+        else if (type_str == "LIQUID_SHEET") init_cond.type = InitialConditionType::LIQUID_SHEET;
         // Branche alternative conditionnelle
         else if (type_str == "SHEAR_LAYER") init_cond.type = InitialConditionType::SHEAR_LAYER;
         // Branche alternative conditionnelle
@@ -322,6 +324,8 @@ bool Config::load_from_json(const std::string& filepath) {
         init_cond.pert_amp = get_double(ic_block, "pert_amp", init_cond.pert_amp);
         // Calcul et assignation numérique
         init_cond.pert_k   = get_double(ic_block, "pert_k", init_cond.pert_k);
+        // Calcul et assignation de l'épaisseur de nappe liquide
+        init_cond.thickness = get_double(ic_block, "thickness", init_cond.thickness);
     }
 
     // 6. Solveur linéaire

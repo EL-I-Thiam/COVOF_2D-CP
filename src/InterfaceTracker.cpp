@@ -73,6 +73,27 @@ void InterfaceTracker::set_initial_condition(const Mesh2D& mesh, const InitialCo
                 double int_y = ic.center_y + ic.pert_amp * std::sin(2.0 * M_PI * ic.pert_k * x / mesh.lx);
                 // Calcul de la résolution géométrique de cellule
                 fields.C[idx] = (y <= int_y) ? 1.0 : 0.0;
+            // Calcul et assignation numérique pour nappe liquide (Cas 3.2 Fluids 2021)
+            } else if (ic.type == InitialConditionType::LIQUID_SHEET) {
+                // Déclaration de la position centrale et demi-épaisseur de nappe
+                double y_c = (ic.center_y > 0.0) ? ic.center_y : 0.5 * mesh.ly;
+                // Calcul de la demi-épaisseur de la nappe liquide
+                double half_thick = 0.5 * ic.thickness;
+                // Calcul de la distance géométrique par rapport à la surface de la nappe
+                double dist = std::abs(y - y_c) - half_thick;
+                // Évaluation de l'indicatrice : C = 0 dans le liquide (fluide 2), C = 1 dans le gaz (fluide 1)
+                if (dist < -eps) {
+                    // Calcul de la résolution géométrique de cellule
+                    fields.C[idx] = 0.0;
+                // Branche alternative conditionnelle
+                } else if (dist > eps) {
+                    // Calcul de la résolution géométrique de cellule
+                    fields.C[idx] = 1.0;
+                // Branche par défaut pour transition continue
+                } else {
+                    // Calcul de la résolution géométrique de cellule
+                    fields.C[idx] = 0.5 + dist / (2.0 * eps) + (1.0 / (2.0 * M_PI)) * std::sin(M_PI * dist / eps);
+                }
             // Calcul et assignation numérique
             } else if (ic.type == InitialConditionType::VORTEX_SHEAR) {
                 // Déclaration de variable typée

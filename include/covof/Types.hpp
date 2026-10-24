@@ -103,6 +103,7 @@ enum class InitialConditionType {
     BUBBLE,          ///< Bulle (Fluide 2 à l'intérieur, Fluide 1 à l'extérieur)
     DAM_BREAK,       ///< Colonne rectangulaire d'eau (rupture de barrage)
     SHEAR_LAYER,     ///< Nappe liquide cisaillée avec perturbation
+    LIQUID_SHEET,    ///< Nappe liquide cisaillée périodique (Cas 3.2 Fluids 2021)
     RAYLEIGH_TAYLOR, ///< Interface perturbée avec fluide lourd au-dessus
     VORTEX_SHEAR     ///< Tâche circulaire déformée par vortex avec cisaillement
 };
@@ -131,6 +132,8 @@ struct InitialConditionConfig {
     double pert_amp = 0.01;  ///< Amplitude de perturbation (Rayleigh-Taylor)
     // Déclaration de variable typée
     double pert_k   = 1.0;   ///< Nombre d'onde de perturbation
+    // Déclaration de variable typée pour l'épaisseur de nappe liquide
+    double thickness = 0.0003; ///< Épaisseur de la nappe liquide (Cas 3.2 Fluids 2021) [m]
 };
 
 /**
