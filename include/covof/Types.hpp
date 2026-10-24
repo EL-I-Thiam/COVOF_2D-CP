@@ -36,6 +36,10 @@ struct BoundaryCondition {
     double u_mean = 0.0; ///< Vitesse moyenne pour profils paraboliques
     // Déclaration de variable typée
     double y_step = 0.0; ///< Hauteur de la marche pour POISEUILLE_STEP
+    // Déclaration de variable typée pour la largeur de l'injecteur (Cas 3.3 Fluids 2021)
+    double jet_width = 0.08; ///< Largeur de l'injecteur pour profil JET_INLET [m]
+    // Déclaration de variable typée pour le centre de l'injecteur
+    double jet_center = 0.5; ///< Position centrale de l'injecteur selon X [m]
     // Calcul et assignation numérique
     BCType T_type = BCType::NEUMANN; ///< Type de CL pour l'énergie (DIRICHLET ou NEUMANN)
     // Déclaration de variable typée
@@ -104,6 +108,7 @@ enum class InitialConditionType {
     DAM_BREAK,       ///< Colonne rectangulaire d'eau (rupture de barrage)
     SHEAR_LAYER,     ///< Nappe liquide cisaillée avec perturbation
     LIQUID_SHEET,    ///< Nappe liquide cisaillée périodique (Cas 3.2 Fluids 2021)
+    VISCOUS_JET,     ///< Jet liquide visqueux injecté / flambement (Cas 3.3 Fluids 2021)
     RAYLEIGH_TAYLOR, ///< Interface perturbée avec fluide lourd au-dessus
     VORTEX_SHEAR     ///< Tâche circulaire déformée par vortex avec cisaillement
 };
@@ -134,6 +139,8 @@ struct InitialConditionConfig {
     double pert_k   = 1.0;   ///< Nombre d'onde de perturbation
     // Déclaration de variable typée pour l'épaisseur de nappe liquide
     double thickness = 0.0003; ///< Épaisseur de la nappe liquide (Cas 3.2 Fluids 2021) [m]
+    // Déclaration de variable typée pour la largeur du jet liquide
+    double jet_width = 0.08;   ///< Largeur du jet liquide injecté (Cas 3.3 Fluids 2021) [m]
 };
 
 /**

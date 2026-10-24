@@ -135,6 +135,10 @@ static void parse_single_bc(const std::string& block, BoundaryCondition& bc) {
     bc.u_mean = get_double(block, "u_mean", 0.0);
     // Calcul et assignation numérique
     bc.y_step = get_double(block, "y_step", 0.0);
+    // Calcul et assignation de la largeur d'injecteur (Cas 3.3 Fluids 2021)
+    bc.jet_width = get_double(block, "jet_width", bc.jet_width);
+    // Calcul et assignation de la position centrale de l'injecteur
+    bc.jet_center = get_double(block, "jet_center", bc.jet_center);
     // Calcul et assignation numérique
     bc.T_type = parse_bc_type(get_string(block, "T_type", "NEUMANN"));
     // Calcul et assignation numérique
@@ -297,6 +301,8 @@ bool Config::load_from_json(const std::string& filepath) {
         else if (type_str == "DAM_BREAK") init_cond.type = InitialConditionType::DAM_BREAK;
         // Branche alternative conditionnelle pour nappe liquide (Cas 3.2 Fluids 2021)
         else if (type_str == "LIQUID_SHEET") init_cond.type = InitialConditionType::LIQUID_SHEET;
+        // Branche alternative conditionnelle pour jet liquide visqueux (Cas 3.3 Fluids 2021)
+        else if (type_str == "VISCOUS_JET" || type_str == "JET_BUCKLING") init_cond.type = InitialConditionType::VISCOUS_JET;
         // Branche alternative conditionnelle
         else if (type_str == "SHEAR_LAYER") init_cond.type = InitialConditionType::SHEAR_LAYER;
         // Branche alternative conditionnelle
@@ -326,6 +332,8 @@ bool Config::load_from_json(const std::string& filepath) {
         init_cond.pert_k   = get_double(ic_block, "pert_k", init_cond.pert_k);
         // Calcul et assignation de l'épaisseur de nappe liquide
         init_cond.thickness = get_double(ic_block, "thickness", init_cond.thickness);
+        // Calcul et assignation de la largeur du jet liquide
+        init_cond.jet_width = get_double(ic_block, "jet_width", init_cond.jet_width);
     }
 
     // 6. Solveur linéaire

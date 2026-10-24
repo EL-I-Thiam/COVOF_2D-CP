@@ -139,6 +139,38 @@ bool Simulation::init(MPI_Comm comm, const std::string& config_file) {
         MpiComm::sync_v(mesh, fields.v);
     }
 
+    // Initialisation du champ de vitesse pour VISCOUS_JET (Cas 3.3 Fluids 2021)
+    if (config.init_cond.type == InitialConditionType::VISCOUS_JET) {
+        // Déclaration des variables physiques et géométriques
+        double x_c = (config.init_cond.center_x > 0.0) ? config.init_cond.center_x : 0.5 * mesh.lx;
+        // Déclaration de variable typée pour la demi-largeur de l'injecteur
+        double half_w = (config.init_cond.jet_width > 0.0) ? 0.5 * config.init_cond.jet_width : 0.04;
+        // Déclaration de la hauteur de l'amorce initiale de jet sous la paroi supérieure
+        double stub_height = 2.0 * mesh.dy;
+        // Vitesse d'injection négative selon Y
+        double v_inlet = (config.bc.top.v_val != 0.0) ? config.bc.top.v_val : -0.6;
+
+        // Composante verticale v sur les faces décalées MAC en y
+        int v_ny = mesh.ny_local + (mesh.is_boundary_top ? 1 : 0);
+        // Boucle spatiale sur les faces v selon l'axe vertical Y
+        for (int j = 1; j <= v_ny; ++j) {
+            // Déclaration de variable typée
+            double y = mesh.yv(j);
+            // Boucle spatiale sur les cellules locales selon l'axe horizontal X
+            for (int i = 1; i <= mesh.nx_local; ++i) {
+                // Déclaration de variable typée
+                double x = mesh.xc(i);
+                // Évaluation de l'appartenance à l'amorce initiale
+                if (y >= mesh.ly - stub_height && std::abs(x - x_c) <= half_w) {
+                    // Calcul et assignation numérique
+                    fields.v[mesh.v_idx(i, j)] = v_inlet;
+                }
+            }
+        }
+        MpiComm::sync_v(mesh, fields.v);
+        MpiComm::apply_boundary_conditions(mesh, config.bc, fields, false);
+    }
+
     // Initialisation du champ thermique si activé
     if (config.enable_energy) {
         // Boucle spatiale sur les cellules locales selon l'axe vertical Y (ordonnées)
@@ -288,6 +320,8 @@ void Simulation::run() {
         // 1. Transport de l'interface si écoulement diphasique
         if (config.enable_two_phase) {
             tracker.advect(mesh, fields, dt);
+            // Actualisation des conditions aux limites pour les mailles fantômes
+            MpiComm::apply_boundary_conditions(mesh, config.bc, fields, false);
         }
 
         // 2. Assemblage des blocs du préconditionneur

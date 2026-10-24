@@ -613,7 +613,27 @@ void NavierStokesSolver::assemble_rhs(const FlowFields& fields, double dt, std::
             // Évaluation de la condition de contrôle
             if (j == v_ny && mesh.is_boundary_top && (bc.top.type == BCType::DIRICHLET || bc.top.type == BCType::FREE_SLIP)) {
                 // Déclaration de variable typée
-                double v_bc = (bc.top.type == BCType::DIRICHLET) ? bc.top.v_val : 0.0;
+                double v_bc = 0.0;
+                // Évaluation de la condition d'injecteur (Cas 3.3 Fluids 2021)
+                if (bc.top.profile == "JET_INLET") {
+                    // Déclaration de variable typée
+                    double x = mesh.xc(i);
+                    // Déclaration de variable typée pour le centre et demi-largeur
+                    double xc = (bc.top.jet_center > 0.0) ? bc.top.jet_center : 0.5 * mesh.lx;
+                    // Calcul de la demi-largeur de l'injecteur
+                    double half_w = (bc.top.jet_width > 0.0) ? 0.5 * bc.top.jet_width : 0.04;
+                    // Évaluation de l'appartenance à l'injecteur
+                    if (std::abs(x - xc) <= half_w) {
+                        // Vitesse d'injection négative imposée
+                        v_bc = bc.top.v_val;
+                    } else {
+                        // Vitesse positive d'échappement compensatoire du gaz
+                        v_bc = -bc.top.v_val * (2.0 * half_w) / (mesh.lx - 2.0 * half_w);
+                    }
+                } else if (bc.top.type == BCType::DIRICHLET) {
+                    // Calcul et assignation numérique standard
+                    v_bc = bc.top.v_val;
+                }
                 // Calcul et assignation numérique
                 rhs[dof] = diag_bc * v_bc;
                 continue;

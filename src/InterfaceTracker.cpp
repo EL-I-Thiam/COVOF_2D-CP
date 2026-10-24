@@ -94,6 +94,22 @@ void InterfaceTracker::set_initial_condition(const Mesh2D& mesh, const InitialCo
                     // Calcul de la résolution géométrique de cellule
                     fields.C[idx] = 0.5 + dist / (2.0 * eps) + (1.0 / (2.0 * M_PI)) * std::sin(M_PI * dist / eps);
                 }
+            // Calcul et assignation numérique pour jet liquide visqueux (Cas 3.3 Fluids 2021)
+            } else if (ic.type == InitialConditionType::VISCOUS_JET) {
+                // Déclaration du centre et de la demi-largeur de l'injecteur
+                double x_c = (ic.center_x > 0.0) ? ic.center_x : 0.5 * mesh.lx;
+                // Calcul de la demi-largeur de l'injecteur
+                double half_w = (ic.jet_width > 0.0) ? 0.5 * ic.jet_width : 0.04;
+                // Déclaration de la hauteur initiale de l'amorce de jet sous la paroi supérieure
+                double stub_height = 2.0 * mesh.dy;
+                // Évaluation de l'indicatrice : C = 0 dans l'amorce liquide, C = 1 dans la cavité de gaz
+                if (y >= mesh.ly - stub_height && std::abs(x - x_c) <= half_w) {
+                    // Calcul de la résolution géométrique de cellule
+                    fields.C[idx] = 0.0;
+                } else {
+                    // Calcul de la résolution géométrique de cellule
+                    fields.C[idx] = 1.0;
+                }
             // Calcul et assignation numérique
             } else if (ic.type == InitialConditionType::VORTEX_SHEAR) {
                 // Déclaration de variable typée

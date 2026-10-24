@@ -508,14 +508,46 @@ void MpiComm::apply_boundary_conditions(const Mesh2D& mesh, const DomainBC& bc, 
     if (mesh.is_boundary_top) {
         // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
         for (int i = 1; i <= nx; ++i) {
-            // Évaluation de la condition de contrôle
-            if (bc.top.type == BCType::DIRICHLET) {
+            // Déclaration de variable typée
+            double x_c = mesh.xc(i);
+            // Évaluation du profil d'injecteur (Cas 3.3 Fluids 2021)
+            if (bc.top.profile == "JET_INLET") {
+                // Déclaration de variable typée pour le centre et demi-largeur
+                double xc = (bc.top.jet_center > 0.0) ? bc.top.jet_center : 0.5 * mesh.lx;
+                // Calcul de la demi-largeur de l'injecteur
+                double half_w = (bc.top.jet_width > 0.0) ? 0.5 * bc.top.jet_width : 0.04;
+                // Évaluation de l'appartenance à l'injecteur
+                if (std::abs(x_c - xc) <= half_w) {
+                    // Évaluation de la condition de contrôle
+                    if (!homogeneous) f.v[mesh.v_idx(i, ny + 1)] = v_top_val;
+                    // Calcul de la résolution géométrique de cellule
+                    f.v[mesh.v_idx(i, ny + 2)] = v_top_val;
+                    // Calcul de la résolution géométrique de cellule
+                    f.u[mesh.u_idx(i, ny + 1)] = 0.0;
+                    // Injection continue de liquide (Fluide 2 : C = 0)
+                    f.C[mesh.cell_idx(i, ny + 1)] = 0.0;
+                } else {
+                    // Calcul du débit de compensation d'échappement du gaz pour incompressibilité stricte
+                    double v_out = -v_top_val * (2.0 * half_w) / (mesh.lx - 2.0 * half_w);
+                    // Évaluation de la condition de contrôle
+                    if (!homogeneous) f.v[mesh.v_idx(i, ny + 1)] = v_out;
+                    // Calcul de la résolution géométrique de cellule
+                    f.v[mesh.v_idx(i, ny + 2)] = v_out;
+                    // Glissement libre tangentiel
+                    f.u[mesh.u_idx(i, ny + 1)] = f.u[mesh.u_idx(i, ny)];
+                    // Évacuation du gaz par sortie libre Neumann
+                    f.C[mesh.cell_idx(i, ny + 1)] = f.C[mesh.cell_idx(i, ny)];
+                }
+            // Évaluation de la condition de contrôle standard
+            } else if (bc.top.type == BCType::DIRICHLET) {
                 // Évaluation de la condition de contrôle
                 if (!homogeneous) f.v[mesh.v_idx(i, ny + 1)] = v_top_val;
                 // Calcul de la résolution géométrique de cellule
                 f.v[mesh.v_idx(i, ny + 2)] = v_top_val;
                 // Calcul de la résolution géométrique de cellule
                 f.u[mesh.u_idx(i, ny + 1)] = 2.0 * u_top_val - f.u[mesh.u_idx(i, ny)];
+                // Calcul de la résolution géométrique de cellule
+                f.C[mesh.cell_idx(i, ny + 1)] = f.C[mesh.cell_idx(i, ny)];
             // Calcul et assignation numérique
             } else if (bc.top.type == BCType::FREE_SLIP) {
                 // Évaluation de la condition de contrôle
@@ -524,17 +556,19 @@ void MpiComm::apply_boundary_conditions(const Mesh2D& mesh, const DomainBC& bc, 
                 f.v[mesh.v_idx(i, ny + 2)] = 0.0;
                 // Calcul de la résolution géométrique de cellule
                 f.u[mesh.u_idx(i, ny + 1)] = f.u[mesh.u_idx(i, ny)];
+                // Calcul de la résolution géométrique de cellule
+                f.C[mesh.cell_idx(i, ny + 1)] = f.C[mesh.cell_idx(i, ny)];
             // Calcul et assignation numérique
             } else if (bc.top.type == BCType::NEUMANN) {
                 // Calcul de la résolution géométrique de cellule
                 f.u[mesh.u_idx(i, ny + 1)] = f.u[mesh.u_idx(i, ny)];
                 // Calcul de la résolution géométrique de cellule
                 f.v[mesh.v_idx(i, ny + 2)] = f.v[mesh.v_idx(i, ny + 1)];
+                // Calcul de la résolution géométrique de cellule
+                f.C[mesh.cell_idx(i, ny + 1)] = f.C[mesh.cell_idx(i, ny)];
             }
             // Calcul de la résolution géométrique de cellule
             f.p[mesh.cell_idx(i, ny + 1)] = f.p[mesh.cell_idx(i, ny)];
-            // Calcul de la résolution géométrique de cellule
-            f.C[mesh.cell_idx(i, ny + 1)] = f.C[mesh.cell_idx(i, ny)];
         }
     }
 }
