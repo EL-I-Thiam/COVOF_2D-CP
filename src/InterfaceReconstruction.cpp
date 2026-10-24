@@ -123,19 +123,19 @@ double InterfaceReconstruction::compute_alpha(double xmin, double xmax, double y
     double min_val = *std::min_element(vals.begin(), vals.end());
     double max_val = *std::max_element(vals.begin(), vals.end());
 
-    // Pour alpha_low = -max_val, nx*x + ny*y + alpha <= 0 est vide -> aire = 0
-    // Pour alpha_high = -min_val, nx*x + ny*y + alpha <= 0 contient tout -> aire = total_area
+    // Pour alpha_low = -max_val, nx*x + ny*y + alpha <= 0 contient tout -> aire = total_area
+    // Pour alpha_high = -min_val, nx*x + ny*y + alpha <= 0 est vide -> aire = 0
     double alpha_low = -max_val - 1.0e-12;
     double alpha_high = -min_val + 1.0e-12;
 
-    // Méthode de dichotomie / bisection pour trouver alpha exact à 1.0e-12
+    // Méthode de dichotomie / bisection pour trouver alpha exact à 1.0e-12 (a décroît avec alpha)
     for (int iter = 0; iter < 45; ++iter) {
         double alpha_mid = 0.5 * (alpha_low + alpha_high);
         double a = cut_box_area(xmin, xmax, ymin, ymax, nx, ny, alpha_mid);
         if (a < target_area) {
-            alpha_low = alpha_mid;
-        } else {
             alpha_high = alpha_mid;
+        } else {
+            alpha_low = alpha_mid;
         }
     }
     return 0.5 * (alpha_low + alpha_high);
@@ -150,8 +150,8 @@ void InterfaceReconstruction::reconstruct_slic(const Mesh2D& mesh, const std::ve
     int nx = mesh.nx_local;
     int ny = mesh.ny_local;
 
-    for (int j = 1; j <= ny; ++j) {
-        for (int i = 1; i <= nx; ++i) {
+    for (int j = 0; j <= ny + 1; ++j) {
+        for (int i = 0; i <= nx + 1; ++i) {
             int idx = mesh.cell_idx(i, j);
             double c = C[idx];
 
@@ -169,23 +169,23 @@ void InterfaceReconstruction::reconstruct_slic(const Mesh2D& mesh, const std::ve
             double ymin = mesh.yv(j);
             double ymax = mesh.yv(j + 1);
 
-            double grad_x = std::abs(C[mesh.cell_idx(i + 1, j)] - C[mesh.cell_idx(i - 1, j)]);
-            double grad_y = std::abs(C[mesh.cell_idx(i, j + 1)] - C[mesh.cell_idx(i, j - 1)]);
+            double snx = 1.0, sny = 0.0;
+            if (i >= 1 && i <= nx && j >= 1 && j <= ny) {
+                double grad_x = std::abs(C[mesh.cell_idx(i + 1, j)] - C[mesh.cell_idx(i - 1, j)]);
+                double grad_y = std::abs(C[mesh.cell_idx(i, j + 1)] - C[mesh.cell_idx(i, j - 1)]);
 
-            double snx = 0.0, sny = 0.0;
-            if (grad_x >= grad_y) {
-                // Interface verticale
-                if (C[mesh.cell_idx(i - 1, j)] >= C[mesh.cell_idx(i + 1, j)]) {
-                    snx = 1.0; sny = 0.0; // Fluide à gauche
+                if (grad_x >= grad_y) {
+                    if (C[mesh.cell_idx(i - 1, j)] >= C[mesh.cell_idx(i + 1, j)]) {
+                        snx = 1.0; sny = 0.0;
+                    } else {
+                        snx = -1.0; sny = 0.0;
+                    }
                 } else {
-                    snx = -1.0; sny = 0.0; // Fluide à droite
-                }
-            } else {
-                // Interface horizontale
-                if (C[mesh.cell_idx(i, j - 1)] >= C[mesh.cell_idx(i, j + 1)]) {
-                    snx = 0.0; sny = 1.0; // Fluide en bas
-                } else {
-                    snx = 0.0; sny = -1.0; // Fluide en haut
+                    if (C[mesh.cell_idx(i, j - 1)] >= C[mesh.cell_idx(i, j + 1)]) {
+                        snx = 0.0; sny = 1.0;
+                    } else {
+                        snx = 0.0; sny = -1.0;
+                    }
                 }
             }
 
@@ -206,8 +206,8 @@ void InterfaceReconstruction::reconstruct_plic(const Mesh2D& mesh, const std::ve
     double dx = mesh.dx;
     double dy = mesh.dy;
 
-    for (int j = 1; j <= ny; ++j) {
-        for (int i = 1; i <= nx; ++i) {
+    for (int j = 0; j <= ny + 1; ++j) {
+        for (int i = 0; i <= nx + 1; ++i) {
             int idx = mesh.cell_idx(i, j);
             double c = C[idx];
 
@@ -220,18 +220,21 @@ void InterfaceReconstruction::reconstruct_plic(const Mesh2D& mesh, const std::ve
                 continue;
             }
 
-            // Calcul du gradient de Youngs sur stencil 3x3 centré
-            double c_mm = C[mesh.cell_idx(i - 1, j - 1)];
-            double c_0m = C[mesh.cell_idx(i,     j - 1)];
-            double c_pm = C[mesh.cell_idx(i + 1, j - 1)];
-            double c_m0 = C[mesh.cell_idx(i - 1, j    )];
-            double c_p0 = C[mesh.cell_idx(i + 1, j    )];
-            double c_mp = C[mesh.cell_idx(i - 1, j + 1)];
-            double c_0p = C[mesh.cell_idx(i,     j + 1)];
-            double c_pp = C[mesh.cell_idx(i + 1, j + 1)];
+            double mx = 1.0, my = 0.0;
+            if (i >= 1 && i <= nx && j >= 1 && j <= ny) {
+                // Calcul du gradient de Youngs sur stencil 3x3 centré
+                double c_mm = C[mesh.cell_idx(i - 1, j - 1)];
+                double c_0m = C[mesh.cell_idx(i,     j - 1)];
+                double c_pm = C[mesh.cell_idx(i + 1, j - 1)];
+                double c_m0 = C[mesh.cell_idx(i - 1, j    )];
+                double c_p0 = C[mesh.cell_idx(i + 1, j    )];
+                double c_mp = C[mesh.cell_idx(i - 1, j + 1)];
+                double c_0p = C[mesh.cell_idx(i,     j + 1)];
+                double c_pp = C[mesh.cell_idx(i + 1, j + 1)];
 
-            double mx = -((c_pp + 2.0 * c_p0 + c_pm) - (c_mp + 2.0 * c_m0 + c_mm)) / (8.0 * dx);
-            double my = -((c_pp + 2.0 * c_0p + c_mp) - (c_pm + 2.0 * c_0m + c_mm)) / (8.0 * dy);
+                mx = -((c_pp + 2.0 * c_p0 + c_pm) - (c_mp + 2.0 * c_m0 + c_mm)) / (8.0 * dx);
+                my = -((c_pp + 2.0 * c_0p + c_mp) - (c_pm + 2.0 * c_0m + c_mm)) / (8.0 * dy);
+            }
 
             double norm = std::hypot(mx, my);
             double pnx = (norm > 1.0e-12) ? mx / norm : 1.0;
@@ -259,8 +262,8 @@ void InterfaceReconstruction::reconstruct_elvira(const Mesh2D& mesh, const std::
     double dx = mesh.dx;
     double dy = mesh.dy;
 
-    for (int j = 1; j <= ny; ++j) {
-        for (int i = 1; i <= nx; ++i) {
+    for (int j = 0; j <= ny + 1; ++j) {
+        for (int i = 0; i <= nx + 1; ++i) {
             int idx = mesh.cell_idx(i, j);
             double c = C[idx];
 
@@ -270,6 +273,14 @@ void InterfaceReconstruction::reconstruct_elvira(const Mesh2D& mesh, const std::
             }
             if (c >= 1.0 - 1.0e-6) {
                 segments[idx] = {1.0, 0.0, -1.0e9};
+                continue;
+            }
+            if (i < 1 || i > nx || j < 1 || j > ny) {
+                double xmin = mesh.xv(i);
+                double xmax = mesh.xv(i + 1);
+                double ymin = mesh.yv(j);
+                double ymax = mesh.yv(j + 1);
+                segments[idx] = {1.0, 0.0, compute_alpha(xmin, xmax, ymin, ymax, 1.0, 0.0, c)};
                 continue;
             }
 
@@ -468,6 +479,52 @@ void InterfaceReconstruction::reconstruct(ReconstructionMethod method, const Mes
         case ReconstructionMethod::ELVIRA:
             reconstruct_elvira(mesh, C, segments);
             break;
+    }
+
+    // Propagation des normales reconstruites vers les mailles fantomes (periodicite / bords)
+    int nx = mesh.nx_local;
+    int ny = mesh.ny_local;
+    int i_left_src  = (!mesh.is_boundary_left  && mesh.num_procs == 1) ? nx : 1;
+    int i_right_src = (!mesh.is_boundary_right && mesh.num_procs == 1) ? 1  : nx;
+    int j_bot_src   = (!mesh.is_boundary_bottom && mesh.num_procs == 1) ? ny : 1;
+    int j_top_src   = (!mesh.is_boundary_top    && mesh.num_procs == 1) ? 1  : ny;
+
+    for (int j = 1; j <= ny; ++j) {
+        // Maille fantome gauche i = 0
+        int idx0 = mesh.cell_idx(0, j);
+        double c0 = C[idx0];
+        if (c0 > 1.0e-6 && c0 < 1.0 - 1.0e-6) {
+            const auto& s_src = segments[mesh.cell_idx(i_left_src, j)];
+            double alpha0 = compute_alpha(mesh.xv(0), mesh.xv(1), mesh.yv(j), mesh.yv(j + 1), s_src.nx, s_src.ny, c0);
+            segments[idx0] = {s_src.nx, s_src.ny, alpha0};
+        }
+        // Maille fantome droite i = nx + 1
+        int idxR = mesh.cell_idx(nx + 1, j);
+        double cR = C[idxR];
+        if (cR > 1.0e-6 && cR < 1.0 - 1.0e-6) {
+            const auto& s_src = segments[mesh.cell_idx(i_right_src, j)];
+            double alphaR = compute_alpha(mesh.xv(nx + 1), mesh.xv(nx + 2), mesh.yv(j), mesh.yv(j + 1), s_src.nx, s_src.ny, cR);
+            segments[idxR] = {s_src.nx, s_src.ny, alphaR};
+        }
+    }
+
+    for (int i = 0; i <= nx + 1; ++i) {
+        // Maille fantome inferieure j = 0
+        int idxB = mesh.cell_idx(i, 0);
+        double cB = C[idxB];
+        if (cB > 1.0e-6 && cB < 1.0 - 1.0e-6) {
+            const auto& s_src = segments[mesh.cell_idx(i, j_bot_src)];
+            double alphaB = compute_alpha(mesh.xv(i), mesh.xv(i + 1), mesh.yv(0), mesh.yv(1), s_src.nx, s_src.ny, cB);
+            segments[idxB] = {s_src.nx, s_src.ny, alphaB};
+        }
+        // Maille fantome superieure j = ny + 1
+        int idxT = mesh.cell_idx(i, ny + 1);
+        double cT = C[idxT];
+        if (cT > 1.0e-6 && cT < 1.0 - 1.0e-6) {
+            const auto& s_src = segments[mesh.cell_idx(i, j_top_src)];
+            double alphaT = compute_alpha(mesh.xv(i), mesh.xv(i + 1), mesh.yv(ny + 1), mesh.yv(ny + 2), s_src.nx, s_src.ny, cT);
+            segments[idxT] = {s_src.nx, s_src.ny, alphaT};
+        }
     }
 }
 

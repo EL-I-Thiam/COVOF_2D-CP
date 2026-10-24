@@ -6,13 +6,27 @@ namespace covof {
 namespace fugu = covof; // Alias rétrocompatibilité
 
 void MpiComm::sync_cell_scalar(const Mesh2D& mesh, std::vector<double>& field) {
-    // Évaluation de la condition de contrôle
-    if (mesh.num_procs == 1) return;
-
     // Déclaration de variable typée
     int nx = mesh.nx_local;
     // Déclaration de variable typée
     int ny = mesh.ny_local;
+
+    // Évaluation de la condition de contrôle
+    if (mesh.num_procs == 1) {
+        if (!mesh.is_boundary_left) {
+            for (int j = 0; j <= ny + 1; ++j) {
+                field[mesh.cell_idx(0, j)]      = field[mesh.cell_idx(nx, j)];
+                field[mesh.cell_idx(nx + 1, j)] = field[mesh.cell_idx(1, j)];
+            }
+        }
+        if (!mesh.is_boundary_bottom) {
+            for (int i = 0; i <= nx + 1; ++i) {
+                field[mesh.cell_idx(i, 0)]      = field[mesh.cell_idx(i, ny)];
+                field[mesh.cell_idx(i, ny + 1)] = field[mesh.cell_idx(i, 1)];
+            }
+        }
+        return;
+    }
 
     // Déclaration de variable typée
     std::vector<double> send_left(ny), recv_left(ny);
@@ -516,17 +530,25 @@ void MpiComm::apply_boundary_conditions(const Mesh2D& mesh, const DomainBC& bc, 
                 double xc = (bc.top.jet_center > 0.0) ? bc.top.jet_center : 0.5 * mesh.lx;
                 // Calcul de la demi-largeur de l'injecteur
                 double half_w = (bc.top.jet_width > 0.0) ? 0.5 * bc.top.jet_width : 0.04;
+                // Calcul de la largeur discrète effective de l'injecteur sur le maillage global
+                double d_disc = 0.0;
+                for (int ig = 1; ig <= mesh.nx_global; ++ig) {
+                    double xg = (ig - 0.5) * mesh.dx;
+                    if (std::abs(xg - xc) <= half_w) d_disc += mesh.dx;
+                }
+                if (d_disc < 1.0e-12) d_disc = 2.0 * half_w;
+                double v_in_eff = v_top_val * (2.0 * half_w) / d_disc;
                 // Évaluation de l'appartenance à l'injecteur
                 if (std::abs(x_c - xc) <= half_w) {
                     // Imposition de la vitesse d'injection (préservée pour la ligne diagonale lors de matvec)
-                    if (!homogeneous) f.v[mesh.v_idx(i, ny + 1)] = v_top_val;
+                    if (!homogeneous) f.v[mesh.v_idx(i, ny + 1)] = v_in_eff;
                     // Calcul de la cellule fantôme supérieure pour divergence nulle au bord
-                    f.v[mesh.v_idx(i, ny + 2)] = homogeneous ? 0.0 : v_top_val;
+                    f.v[mesh.v_idx(i, ny + 2)] = homogeneous ? 0.0 : v_in_eff;
                     // Injection continue de liquide (Fluide 2 : C = 0)
                     f.C[mesh.cell_idx(i, ny + 1)] = 0.0;
                 } else {
                     // Calcul du débit de compensation d'échappement du gaz pour incompressibilité stricte
-                    double v_out = -v_top_val * (2.0 * half_w) / (mesh.lx - 2.0 * half_w);
+                    double v_out = -v_top_val * (2.0 * half_w) / (mesh.lx - d_disc);
                     // Imposition de la vitesse d'évacuation (préservée pour la ligne diagonale lors de matvec)
                     if (!homogeneous) f.v[mesh.v_idx(i, ny + 1)] = v_out;
                     // Calcul de la cellule fantôme supérieure

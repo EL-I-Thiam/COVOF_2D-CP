@@ -259,31 +259,31 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
             // Terme instationnaire
             double val = (rho_u / dt) * tf.u[mesh.u_idx(i, j)] * dvol;
 
-            // Terme convectif semi-implicite F_uu
+            // Terme convectif semi-implicite F_uu (forme advective non-conservative a densite harmonique)
             if (enable_convection) {
-                // Déclaration de variable typée
                 double u_n = fields_old.u[mesh.u_idx(i, j)];
-                // Déclaration de variable typée
                 double u_n_E = fields_old.u[mesh.u_idx(i + 1, j)];
-                // Déclaration de variable typée
                 double u_n_W = fields_old.u[mesh.u_idx(i - 1, j)];
 
-                // Déclaration de variable typée
                 double v_n_N = 0.5 * (fields_old.v[mesh.v_idx(i - 1, j + 1)] + fields_old.v[mesh.v_idx(i, j + 1)]);
-                // Déclaration de variable typée
                 double v_n_S = 0.5 * (fields_old.v[mesh.v_idx(i - 1, j)] + fields_old.v[mesh.v_idx(i, j)]);
 
-                // Déclaration de variable typée
-                double conv_E = 0.5 * (u_n + u_n_E) * 0.5 * (tf.u[mesh.u_idx(i, j)] + tf.u[mesh.u_idx(i + 1, j)]) * dy;
-                // Déclaration de variable typée
-                double conv_W = 0.5 * (u_n_W + u_n) * 0.5 * (tf.u[mesh.u_idx(i - 1, j)] + tf.u[mesh.u_idx(i, j)]) * dy;
-                // Déclaration de variable typée
-                double conv_N = v_n_N * 0.5 * (tf.u[mesh.u_idx(i, j)] + tf.u[mesh.u_idx(i, j + 1)]) * dx;
-                // Déclaration de variable typée
-                double conv_S = v_n_S * 0.5 * (tf.u[mesh.u_idx(i, j - 1)] + tf.u[mesh.u_idx(i, j)]) * dx;
+                double rho_u_E = fields_old.rho_u[mesh.u_idx(i + 1, j)];
+                double rho_u_W = fields_old.rho_u[mesh.u_idx(i - 1, j)];
+                double rho_u_N = (j < mesh.ny_local) ? fields_old.rho_u[mesh.u_idx(i, j + 1)] : rho_u;
+                double rho_u_S = (j > 1) ? fields_old.rho_u[mesh.u_idx(i, j - 1)] : rho_u;
 
-                // Calcul et assignation numérique
-                val += rho_u * (conv_E - conv_W + conv_N - conv_S);
+                double rho_E = (2.0 * rho_u * rho_u_E) / std::max(1.0e-12, rho_u + rho_u_E);
+                double rho_W = (2.0 * rho_u * rho_u_W) / std::max(1.0e-12, rho_u + rho_u_W);
+                double rho_N = (2.0 * rho_u * rho_u_N) / std::max(1.0e-12, rho_u + rho_u_N);
+                double rho_S = (2.0 * rho_u * rho_u_S) / std::max(1.0e-12, rho_u + rho_u_S);
+
+                double du_E = 0.5 * (u_n + u_n_E) * 0.5 * (tf.u[mesh.u_idx(i + 1, j)] - tf.u[mesh.u_idx(i, j)]) * dy;
+                double du_W = 0.5 * (u_n_W + u_n) * 0.5 * (tf.u[mesh.u_idx(i, j)] - tf.u[mesh.u_idx(i - 1, j)]) * dy;
+                double du_N = v_n_N * 0.5 * (tf.u[mesh.u_idx(i, j + 1)] - tf.u[mesh.u_idx(i, j)]) * dx;
+                double du_S = v_n_S * 0.5 * (tf.u[mesh.u_idx(i, j)] - tf.u[mesh.u_idx(i, j - 1)]) * dx;
+
+                val += (rho_E * du_E + rho_W * du_W + rho_N * du_N + rho_S * du_S);
             }
 
             // Termes visqueux implicites d'ordre 2 (Caltagirone et al. - Annexe A)
@@ -364,31 +364,31 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
             // Terme instationnaire
             double val = (rho_v / dt) * tf.v[mesh.v_idx(i, j)] * dvol;
 
-            // Terme convectif semi-implicite F_vv
+            // Terme convectif semi-implicite F_vv (forme advective non-conservative a densite harmonique)
             if (enable_convection) {
-                // Déclaration de variable typée
                 double v_n = fields_old.v[mesh.v_idx(i, j)];
-                // Déclaration de variable typée
                 double v_n_N = fields_old.v[mesh.v_idx(i, j + 1)];
-                // Déclaration de variable typée
                 double v_n_S = fields_old.v[mesh.v_idx(i, j - 1)];
 
-                // Déclaration de variable typée
                 double u_n_E = 0.5 * (fields_old.u[mesh.u_idx(i + 1, j - 1)] + fields_old.u[mesh.u_idx(i + 1, j)]);
-                // Déclaration de variable typée
                 double u_n_W = 0.5 * (fields_old.u[mesh.u_idx(i, j - 1)] + fields_old.u[mesh.u_idx(i, j)]);
 
-                // Déclaration de variable typée
-                double conv_E = u_n_E * 0.5 * (tf.v[mesh.v_idx(i, j)] + tf.v[mesh.v_idx(i + 1, j)]) * dy;
-                // Déclaration de variable typée
-                double conv_W = u_n_W * 0.5 * (tf.v[mesh.v_idx(i - 1, j)] + tf.v[mesh.v_idx(i, j)]) * dy;
-                // Déclaration de variable typée
-                double conv_N = 0.5 * (v_n + v_n_N) * 0.5 * (tf.v[mesh.v_idx(i, j)] + tf.v[mesh.v_idx(i, j + 1)]) * dx;
-                // Déclaration de variable typée
-                double conv_S = 0.5 * (v_n_S + v_n) * 0.5 * (tf.v[mesh.v_idx(i, j - 1)] + tf.v[mesh.v_idx(i, j)]) * dx;
+                double rho_v_E = (i < mesh.nx_local) ? fields_old.rho_v[mesh.v_idx(i + 1, j)] : rho_v;
+                double rho_v_W = (i > 1) ? fields_old.rho_v[mesh.v_idx(i - 1, j)] : rho_v;
+                double rho_v_N = fields_old.rho_v[mesh.v_idx(i, j + 1)];
+                double rho_v_S = fields_old.rho_v[mesh.v_idx(i, j - 1)];
 
-                // Calcul et assignation numérique
-                val += rho_v * (conv_E - conv_W + conv_N - conv_S);
+                double rho_E = (2.0 * rho_v * rho_v_E) / std::max(1.0e-12, rho_v + rho_v_E);
+                double rho_W = (2.0 * rho_v * rho_v_W) / std::max(1.0e-12, rho_v + rho_v_W);
+                double rho_N = (2.0 * rho_v * rho_v_N) / std::max(1.0e-12, rho_v + rho_v_N);
+                double rho_S = (2.0 * rho_v * rho_v_S) / std::max(1.0e-12, rho_v + rho_v_S);
+
+                double dv_E = u_n_E * 0.5 * (tf.v[mesh.v_idx(i + 1, j)] - tf.v[mesh.v_idx(i, j)]) * dy;
+                double dv_W = u_n_W * 0.5 * (tf.v[mesh.v_idx(i, j)] - tf.v[mesh.v_idx(i - 1, j)]) * dy;
+                double dv_N = 0.5 * (v_n + v_n_N) * 0.5 * (tf.v[mesh.v_idx(i, j + 1)] - tf.v[mesh.v_idx(i, j)]) * dx;
+                double dv_S = 0.5 * (v_n_S + v_n) * 0.5 * (tf.v[mesh.v_idx(i, j)] - tf.v[mesh.v_idx(i, j - 1)]) * dx;
+
+                val += (rho_E * dv_E + rho_W * dv_W + rho_N * dv_N + rho_S * dv_S);
             }
 
             // Termes visqueux implicites d'ordre 2
@@ -622,13 +622,19 @@ void NavierStokesSolver::assemble_rhs(const FlowFields& fields, double dt, std::
                     double xc = (bc.top.jet_center > 0.0) ? bc.top.jet_center : 0.5 * mesh.lx;
                     // Calcul de la demi-largeur de l'injecteur
                     double half_w = (bc.top.jet_width > 0.0) ? 0.5 * bc.top.jet_width : 0.04;
+                    double d_disc = 0.0;
+                    for (int ig = 1; ig <= mesh.nx_global; ++ig) {
+                        double xg = (ig - 0.5) * mesh.dx;
+                        if (std::abs(xg - xc) <= half_w) d_disc += mesh.dx;
+                    }
+                    if (d_disc < 1.0e-12) d_disc = 2.0 * half_w;
                     // Évaluation de l'appartenance à l'injecteur
                     if (std::abs(x - xc) <= half_w) {
-                        // Vitesse d'injection négative imposée
-                        v_bc = bc.top.v_val;
+                        // Vitesse d'injection négative imposée (conservant le débit D * v0 exact)
+                        v_bc = bc.top.v_val * (2.0 * half_w) / d_disc;
                     } else {
                         // Vitesse positive d'échappement compensatoire du gaz
-                        v_bc = -bc.top.v_val * (2.0 * half_w) / (mesh.lx - 2.0 * half_w);
+                        v_bc = -bc.top.v_val * (2.0 * half_w) / (mesh.lx - d_disc);
                     }
                 } else if (bc.top.type == BCType::DIRICHLET) {
                     // Calcul et assignation numérique standard

@@ -137,6 +137,7 @@ bool Simulation::init(MPI_Comm comm, const std::string& config_file) {
         }
         MpiComm::sync_u(mesh, fields.u);
         MpiComm::sync_v(mesh, fields.v);
+        MpiComm::apply_boundary_conditions(mesh, config.bc, fields, false);
     }
 
     // Initialisation du champ de vitesse pour VISCOUS_JET (Cas 3.3 Fluids 2021)
@@ -147,8 +148,15 @@ bool Simulation::init(MPI_Comm comm, const std::string& config_file) {
         double half_w = (config.init_cond.jet_width > 0.0) ? 0.5 * config.init_cond.jet_width : 0.04;
         // Déclaration de la hauteur de l'amorce initiale de jet sous la paroi supérieure
         double stub_height = 2.0 * mesh.dy;
-        // Vitesse d'injection négative selon Y
+        // Vitesse d'injection négative selon Y (ajustée au débit discret exact D * v0)
         double v_inlet = (config.bc.top.v_val != 0.0) ? config.bc.top.v_val : -0.6;
+        double d_disc = 0.0;
+        for (int ig = 1; ig <= mesh.nx_global; ++ig) {
+            double xg = (ig - 0.5) * mesh.dx;
+            if (std::abs(xg - x_c) <= half_w) d_disc += mesh.dx;
+        }
+        if (d_disc < 1.0e-12) d_disc = 2.0 * half_w;
+        double v_in_eff = v_inlet * (2.0 * half_w) / d_disc;
 
         // Composante verticale v sur les faces décalées MAC en y
         int v_ny = mesh.ny_local + (mesh.is_boundary_top ? 1 : 0);
@@ -163,7 +171,7 @@ bool Simulation::init(MPI_Comm comm, const std::string& config_file) {
                 // Évaluation de l'appartenance à l'amorce initiale
                 if (y >= mesh.ly - stub_height && std::abs(x - x_c) <= half_w) {
                     // Calcul et assignation numérique
-                    fields.v[mesh.v_idx(i, j)] = v_inlet;
+                    fields.v[mesh.v_idx(i, j)] = v_in_eff;
                 }
             }
         }

@@ -545,9 +545,9 @@ void InterfaceTracker::advect_ciam(const Mesh2D& mesh, FlowFields& fields, doubl
                 // Mise à jour conservative 1D avec compensation de divergence
                 double denom = dx - dt * (u_out - u_in);
                 if (denom > 1.0e-12) {
-                    C_out[idx] = (C_in[idx] * dx - (f_out - f_in)) / denom;
+                    C_out[idx] = (C_in[idx] * dx - (f_out - f_in) / dy) / denom;
                 } else {
-                    C_out[idx] = C_in[idx] - (f_out - f_in) / dx;
+                    C_out[idx] = C_in[idx] - (f_out - f_in) / (dx * dy);
                 }
                 C_out[idx] = std::clamp(C_out[idx], 0.0, 1.0);
             }
@@ -604,9 +604,9 @@ void InterfaceTracker::advect_ciam(const Mesh2D& mesh, FlowFields& fields, doubl
 
                 double denom = dy - dt * (v_out - v_in);
                 if (denom > 1.0e-12) {
-                    C_out[idx] = (C_in[idx] * dy - (f_out - f_in)) / denom;
+                    C_out[idx] = (C_in[idx] * dy - (f_out - f_in) / dx) / denom;
                 } else {
-                    C_out[idx] = C_in[idx] - (f_out - f_in) / dy;
+                    C_out[idx] = C_in[idx] - (f_out - f_in) / (dx * dy);
                 }
                 C_out[idx] = std::clamp(C_out[idx], 0.0, 1.0);
             }
@@ -638,196 +638,115 @@ void InterfaceTracker::advect_weymouth_yue(const Mesh2D& mesh, FlowFields& field
     double cell_area = dx * dy;
 
     ReconstructionMethod recon_method = InterfaceReconstruction::parse_reconstruction_method(vof_cfg.reconstruction_method);
+    bool x_first = (step_count % 2 == 0);
 
-    // 1. Reconstruction geometrique sur le champ initial C^n
-    InterfaceReconstruction::reconstruct(recon_method, mesh, fields.C, interface_segments);
+    // 1. Fonction indicatrice de dilatation binaire C_d(i,j) figee au temps n (Weymouth & Yue, JCP 2010, Eq. 14)
+    std::vector<double> C_d((nx + 2) * (ny + 2), 0.0);
+    for (int j = 0; j <= ny + 1; ++j) {
+        for (int i = 0; i <= nx + 1; ++i) {
+            int idx = mesh.cell_idx(i, j);
+            C_d[idx] = (fields.C[idx] >= 0.5) ? 1.0 : 0.0;
+        }
+    }
 
-    // 2. Calcul des flux 1D de faces geometriques
-    std::vector<double> f_vol_x((nx + 2) * (ny + 2), 0.0);
-    std::vector<double> f_vol_y((nx + 2) * (ny + 2), 0.0);
+    // 2. Balayage directionnel 1D selon X (Weymouth & Yue, JCP 2010, Eq. 15)
+    auto sweep_x = [&](std::vector<double>& C_in, std::vector<double>& C_out, bool clamp_out) {
+        InterfaceReconstruction::reconstruct(recon_method, mesh, C_in, interface_segments);
+        std::vector<double> f_vol_x((nx + 2) * (ny + 2), 0.0);
 
-    for (int j = 1; j <= ny; ++j) {
-        for (int i = 1; i <= nx + 1; ++i) {
-            double u_face = fields.u[mesh.u_idx(i, j)];
-            double delta_x = std::abs(u_face) * dt;
-            if (delta_x <= 1.0e-14) continue;
+        for (int j = 1; j <= ny; ++j) {
+            for (int i = 1; i <= nx + 1; ++i) {
+                double u_face = fields.u[mesh.u_idx(i, j)];
+                double delta_x = std::abs(u_face) * dt;
+                if (delta_x <= 1.0e-14) continue;
 
-            if (u_face > 0.0) {
-                int donor_idx = mesh.cell_idx(i - 1, j);
                 double x_pos = mesh.xv(i);
-                const auto& seg = interface_segments[donor_idx];
-                f_vol_x[mesh.cell_idx(i, j)] = InterfaceReconstruction::cut_box_area(x_pos - delta_x, x_pos,
-                                                                                     mesh.yv(j), mesh.yv(j + 1),
-                                                                                     seg.nx, seg.ny, seg.alpha);
-            } else {
-                int donor_idx = mesh.cell_idx(i, j);
-                double x_pos = mesh.xv(i);
-                const auto& seg = interface_segments[donor_idx];
-                f_vol_x[mesh.cell_idx(i, j)] = -InterfaceReconstruction::cut_box_area(x_pos, x_pos + delta_x,
-                                                                                      mesh.yv(j), mesh.yv(j + 1),
-                                                                                      seg.nx, seg.ny, seg.alpha);
+                if (u_face > 0.0) {
+                    int donor_idx = mesh.cell_idx(i - 1, j);
+                    const auto& seg = interface_segments[donor_idx];
+                    f_vol_x[mesh.cell_idx(i, j)] = InterfaceReconstruction::cut_box_area(
+                        x_pos - delta_x, x_pos, mesh.yv(j), mesh.yv(j + 1), seg.nx, seg.ny, seg.alpha);
+                } else {
+                    int donor_idx = mesh.cell_idx(i, j);
+                    const auto& seg = interface_segments[donor_idx];
+                    f_vol_x[mesh.cell_idx(i, j)] = -InterfaceReconstruction::cut_box_area(
+                        x_pos, x_pos + delta_x, mesh.yv(j), mesh.yv(j + 1), seg.nx, seg.ny, seg.alpha);
+                }
             }
         }
-    }
 
-    for (int j = 1; j <= ny + 1; ++j) {
-        for (int i = 1; i <= nx; ++i) {
-            double v_face = fields.v[mesh.v_idx(i, j)];
-            double delta_y = std::abs(v_face) * dt;
-            if (delta_y <= 1.0e-14) continue;
+        for (int j = 1; j <= ny; ++j) {
+            for (int i = 1; i <= nx; ++i) {
+                int idx = mesh.cell_idx(i, j);
+                double fx_in  = f_vol_x[mesh.cell_idx(i, j)];
+                double fx_out = f_vol_x[mesh.cell_idx(i + 1, j)];
+                double u_in   = fields.u[mesh.u_idx(i, j)];
+                double u_out  = fields.u[mesh.u_idx(i + 1, j)];
 
-            if (v_face > 0.0) {
-                int donor_idx = mesh.cell_idx(i, j - 1);
+                C_out[idx] = C_in[idx] - (fx_out - fx_in) / cell_area + C_d[idx] * (dt / dx) * (u_out - u_in);
+                if (clamp_out) {
+                    C_out[idx] = std::clamp(C_out[idx], 0.0, 1.0);
+                }
+            }
+        }
+        MpiComm::sync_cell_scalar(mesh, C_out);
+    };
+
+    // 3. Balayage directionnel 1D selon Y (Weymouth & Yue, JCP 2010, Eq. 16)
+    auto sweep_y = [&](std::vector<double>& C_in, std::vector<double>& C_out, bool clamp_out) {
+        InterfaceReconstruction::reconstruct(recon_method, mesh, C_in, interface_segments);
+        std::vector<double> f_vol_y((nx + 2) * (ny + 2), 0.0);
+
+        for (int j = 1; j <= ny + 1; ++j) {
+            for (int i = 1; i <= nx; ++i) {
+                double v_face = fields.v[mesh.v_idx(i, j)];
+                double delta_y = std::abs(v_face) * dt;
+                if (delta_y <= 1.0e-14) continue;
+
                 double y_pos = mesh.yv(j);
-                const auto& seg = interface_segments[donor_idx];
-                f_vol_y[mesh.cell_idx(i, j)] = InterfaceReconstruction::cut_box_area(mesh.xv(i), mesh.xv(i + 1),
-                                                                                     y_pos - delta_y, y_pos,
-                                                                                     seg.nx, seg.ny, seg.alpha);
-            } else {
-                int donor_idx = mesh.cell_idx(i, j);
-                double y_pos = mesh.yv(j);
-                const auto& seg = interface_segments[donor_idx];
-                f_vol_y[mesh.cell_idx(i, j)] = -InterfaceReconstruction::cut_box_area(mesh.xv(i), mesh.xv(i + 1),
-                                                                                      y_pos, y_pos + delta_y,
-                                                                                      seg.nx, seg.ny, seg.alpha);
+                if (v_face > 0.0) {
+                    int donor_idx = mesh.cell_idx(i, j - 1);
+                    const auto& seg = interface_segments[donor_idx];
+                    f_vol_y[mesh.cell_idx(i, j)] = InterfaceReconstruction::cut_box_area(
+                        mesh.xv(i), mesh.xv(i + 1), y_pos - delta_y, y_pos, seg.nx, seg.ny, seg.alpha);
+                } else {
+                    int donor_idx = mesh.cell_idx(i, j);
+                    const auto& seg = interface_segments[donor_idx];
+                    f_vol_y[mesh.cell_idx(i, j)] = -InterfaceReconstruction::cut_box_area(
+                        mesh.xv(i), mesh.xv(i + 1), y_pos, y_pos + delta_y, seg.nx, seg.ny, seg.alpha);
+                }
             }
         }
-    }
 
-    // 3. Correction multidimensionnelle de coin de Weymouth & Yue
-    for (int j = 1; j <= ny; ++j) {
-        for (int i = 1; i <= nx; ++i) {
-            int idx = mesh.cell_idx(i, j);
-            double u_e = fields.u[mesh.u_idx(i + 1, j)];
-            double u_w = fields.u[mesh.u_idx(i, j)];
-            double v_n = fields.v[mesh.v_idx(i, j + 1)];
-            double v_s = fields.v[mesh.v_idx(i, j)];
-            const auto& seg = interface_segments[idx];
+        for (int j = 1; j <= ny; ++j) {
+            for (int i = 1; i <= nx; ++i) {
+                int idx = mesh.cell_idx(i, j);
+                double fy_in  = f_vol_y[mesh.cell_idx(i, j)];
+                double fy_out = f_vol_y[mesh.cell_idx(i, j + 1)];
+                double v_in   = fields.v[mesh.v_idx(i, j)];
+                double v_out  = fields.v[mesh.v_idx(i, j + 1)];
 
-            if (u_e > 0.0 && v_n > 0.0) {
-                double c_xmin = mesh.xv(i + 1) - u_e * dt;
-                double c_xmax = mesh.xv(i + 1);
-                double c_ymin = mesh.yv(j + 1) - v_n * dt;
-                double c_ymax = mesh.yv(j + 1);
-                double v_corner = InterfaceReconstruction::cut_box_area(c_xmin, c_xmax, c_ymin, c_ymax,
-                                                                        seg.nx, seg.ny, seg.alpha);
-                f_vol_x[mesh.cell_idx(i + 1, j)] -= 0.5 * v_corner;
-                f_vol_y[mesh.cell_idx(i, j + 1)] -= 0.5 * v_corner;
-            }
-            if (u_w < 0.0 && v_n > 0.0) {
-                double c_xmin = mesh.xv(i);
-                double c_xmax = mesh.xv(i) - u_w * dt;
-                double c_ymin = mesh.yv(j + 1) - v_n * dt;
-                double c_ymax = mesh.yv(j + 1);
-                double v_corner = InterfaceReconstruction::cut_box_area(c_xmin, c_xmax, c_ymin, c_ymax,
-                                                                        seg.nx, seg.ny, seg.alpha);
-                f_vol_x[mesh.cell_idx(i, j)] += 0.5 * v_corner;
-                f_vol_y[mesh.cell_idx(i, j + 1)] -= 0.5 * v_corner;
-            }
-            if (u_e > 0.0 && v_s < 0.0) {
-                double c_xmin = mesh.xv(i + 1) - u_e * dt;
-                double c_xmax = mesh.xv(i + 1);
-                double c_ymin = mesh.yv(j);
-                double c_ymax = mesh.yv(j) - v_s * dt;
-                double v_corner = InterfaceReconstruction::cut_box_area(c_xmin, c_xmax, c_ymin, c_ymax,
-                                                                        seg.nx, seg.ny, seg.alpha);
-                f_vol_x[mesh.cell_idx(i + 1, j)] -= 0.5 * v_corner;
-                f_vol_y[mesh.cell_idx(i, j)] += 0.5 * v_corner;
-            }
-            if (u_w < 0.0 && v_s < 0.0) {
-                double c_xmin = mesh.xv(i);
-                double c_xmax = mesh.xv(i) - u_w * dt;
-                double c_ymin = mesh.yv(j);
-                double c_ymax = mesh.yv(j) - v_s * dt;
-                double v_corner = InterfaceReconstruction::cut_box_area(c_xmin, c_xmax, c_ymin, c_ymax,
-                                                                        seg.nx, seg.ny, seg.alpha);
-                f_vol_x[mesh.cell_idx(i, j)] += 0.5 * v_corner;
-                f_vol_y[mesh.cell_idx(i, j)] += 0.5 * v_corner;
+                C_out[idx] = C_in[idx] - (fy_out - fy_in) / cell_area + C_d[idx] * (dt / dy) * (v_out - v_in);
+                if (clamp_out) {
+                    C_out[idx] = std::clamp(C_out[idx], 0.0, 1.0);
+                }
             }
         }
+        MpiComm::sync_cell_scalar(mesh, C_out);
+    };
+
+    std::vector<double> C_star = fields.C;
+    std::vector<double> C_final = fields.C;
+
+    if (x_first) {
+        sweep_x(fields.C, C_star, false);
+        sweep_y(C_star, C_final, true);
+    } else {
+        sweep_y(fields.C, C_star, false);
+        sweep_x(C_star, C_final, true);
     }
 
-    // 4. Limitation conservative de Weymouth & Yue garantissant 0 <= C <= 1 et conservation de masse exacte
-    std::vector<double> scale_out((nx + 2) * (ny + 2), 1.0);
-    std::vector<double> scale_in((nx + 2) * (ny + 2), 1.0);
-
-    for (int j = 1; j <= ny; ++j) {
-        for (int i = 1; i <= nx; ++i) {
-            int idx = mesh.cell_idx(i, j);
-            double v_fluid = fields.C[idx] * cell_area;
-            double v_empty = (1.0 - fields.C[idx]) * cell_area;
-
-            double f_out = std::max(0.0, f_vol_x[mesh.cell_idx(i + 1, j)]) +
-                           std::max(0.0, -f_vol_x[mesh.cell_idx(i, j)]) +
-                           std::max(0.0, f_vol_y[mesh.cell_idx(i, j + 1)]) +
-                           std::max(0.0, -f_vol_y[mesh.cell_idx(i, j)]);
-
-            double f_in = std::max(0.0, -f_vol_x[mesh.cell_idx(i + 1, j)]) +
-                          std::max(0.0, f_vol_x[mesh.cell_idx(i, j)]) +
-                          std::max(0.0, -f_vol_y[mesh.cell_idx(i, j + 1)]) +
-                          std::max(0.0, f_vol_y[mesh.cell_idx(i, j)]);
-
-            if (f_out > v_fluid && f_out > 1.0e-14) {
-                scale_out[idx] = v_fluid / f_out;
-            }
-            if (f_in > v_empty && f_in > 1.0e-14) {
-                scale_in[idx] = v_empty / f_in;
-            }
-        }
-    }
-
-    for (int j = 1; j <= ny; ++j) {
-        for (int i = 1; i <= nx + 1; ++i) {
-            int c_idx = mesh.cell_idx(i, j);
-            double f = f_vol_x[c_idx];
-            if (f > 0.0) {
-                int donor = mesh.cell_idx(i - 1, j);
-                int receiver = mesh.cell_idx(i, j);
-                double s = std::min(scale_out[donor], scale_in[receiver]);
-                f_vol_x[c_idx] = f * s;
-            } else if (f < 0.0) {
-                int donor = mesh.cell_idx(i, j);
-                int receiver = mesh.cell_idx(i - 1, j);
-                double s = std::min(scale_out[donor], scale_in[receiver]);
-                f_vol_x[c_idx] = f * s;
-            }
-        }
-    }
-
-    for (int j = 1; j <= ny + 1; ++j) {
-        for (int i = 1; i <= nx; ++i) {
-            int c_idx = mesh.cell_idx(i, j);
-            double f = f_vol_y[c_idx];
-            if (f > 0.0) {
-                int donor = mesh.cell_idx(i, j - 1);
-                int receiver = mesh.cell_idx(i, j);
-                double s = std::min(scale_out[donor], scale_in[receiver]);
-                f_vol_y[c_idx] = f * s;
-            } else if (f < 0.0) {
-                int donor = mesh.cell_idx(i, j);
-                int receiver = mesh.cell_idx(i, j - 1);
-                double s = std::min(scale_out[donor], scale_in[receiver]);
-                f_vol_y[c_idx] = f * s;
-            }
-        }
-    }
-
-    // 5. Mise a jour conservative exacte
-    std::vector<double> C_new = fields.C;
-    for (int j = 1; j <= ny; ++j) {
-        for (int i = 1; i <= nx; ++i) {
-            int idx = mesh.cell_idx(i, j);
-            double fx_in  = f_vol_x[mesh.cell_idx(i, j)];
-            double fx_out = f_vol_x[mesh.cell_idx(i + 1, j)];
-            double fy_in  = f_vol_y[mesh.cell_idx(i, j)];
-            double fy_out = f_vol_y[mesh.cell_idx(i, j + 1)];
-
-            C_new[idx] = fields.C[idx] - (1.0 / cell_area) * ((fx_out - fx_in) + (fy_out - fy_in));
-            C_new[idx] = std::clamp(C_new[idx], 0.0, 1.0);
-        }
-    }
-
-    fields.C = C_new;
+    fields.C = C_final;
 }
 
 } // namespace covof

@@ -377,13 +377,26 @@ bool Config::load_from_json(const std::string& filepath) {
     // Évaluation de la condition de contrôle
     if (!vof_block.empty()) {
         // Calcul et assignation numérique
-        vof.reconstruction_method = get_string(vof_block, "reconstruction_method", vof.reconstruction_method);
-        // Calcul et assignation numérique
         vof.advection_method      = get_string(vof_block, "advection_method", vof.advection_method);
+        // Calcul et assignation numérique
+        vof.reconstruction_method = get_string(vof_block, "reconstruction_method", vof.reconstruction_method);
         // Calcul et assignation numérique
         vof.tvd_limiter           = get_string(vof_block, "tvd_limiter", vof.tvd_limiter);
         // Calcul et assignation numérique
         vof.cfl_vof               = get_double(vof_block, "cfl_vof", vof.cfl_vof);
+    }
+    // Cohérence stricte : le schéma algébrique TVD ne s'accompagne d'aucune reconstruction géométrique,
+    // tandis que les schémas géométriques (WEYMOUTH_YUE, CIAM) n'utilisent pas de limiteur TVD.
+    if (vof.advection_method == "VOF_TVD" || vof.advection_method == "TVD") {
+        vof.reconstruction_method = "NONE";
+        if (vof.tvd_limiter == "NONE" || vof.tvd_limiter.empty()) {
+            vof.tvd_limiter = "SUPERBEE";
+        }
+    } else {
+        if (vof.reconstruction_method == "NONE" || vof.reconstruction_method.empty()) {
+            vof.reconstruction_method = "PLIC";
+        }
+        vof.tvd_limiter = "NONE";
     }
 
     // 9. Obstacles immergés (Pénalisation de Brinkman)
@@ -462,10 +475,14 @@ void Config::print() const {
         // Calcul et assignation numérique
         std::cout << " Fluide 2 : rho=" << fluid2.rho << " kg/m3, mu=" << fluid2.mu << " Pa.s\n"
                   // Calcul et assignation numérique
-                  << " Tension superficielle sigma = " << sigma << " N/m\n"
-                  << " VOF : Reconstruction=" << vof.reconstruction_method 
-                  << " | Advection=" << vof.advection_method 
-                  << " | Limiteur=" << vof.tvd_limiter << "\n";
+                  << " Tension superficielle sigma = " << sigma << " N/m\n";
+        if (vof.advection_method == "VOF_TVD" || vof.advection_method == "TVD") {
+            std::cout << " VOF : Advection=" << vof.advection_method
+                      << " (Algebrique, sans reconstruction) | Limiteur=" << vof.tvd_limiter << "\n";
+        } else {
+            std::cout << " VOF : Advection=" << vof.advection_method
+                      << " | Reconstruction=" << vof.reconstruction_method << "\n";
+        }
     }
     // Calcul et assignation numérique
     std::cout << " Gravite : g = (" << gx << ", " << gy << ") m/s^2\n"

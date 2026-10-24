@@ -184,13 +184,13 @@ struct OutputConfig {
  */
 struct VofConfig {
     // Déclaration de variable typée
-    std::string reconstruction_method = "PLIC";   ///< "SLIC", "PLIC", "LVIRA", "ELVIRA"
+    std::string reconstruction_method = "PLIC";       ///< "PLIC", "ELVIRA", "LVIRA", "SLIC", "NONE"
     // Déclaration de variable typée
-    std::string advection_method = "VOF_TVD";    ///< "VOF_TVD", "CIAM", "WEYMOUTH_YUE"
+    std::string advection_method = "WEYMOUTH_YUE";    ///< "WEYMOUTH_YUE", "CIAM", "VOF_TVD"
     // Déclaration de variable typée
-    std::string tvd_limiter = "SUPERBEE";        ///< "SUPERBEE", "VAN_LEER", "MUSCL", "HRIC"
+    std::string tvd_limiter = "NONE";                 ///< "SUPERBEE", "VAN_LEER", "MUSCL", "HRIC", "NONE"
     // Déclaration de variable typée
-    double cfl_vof = 0.4;                        ///< Nombre de CFL maximum pour le transport VOF
+    double cfl_vof = 0.5;                             ///< Nombre de CFL maximum pour le transport VOF
 };
 
 } // namespace covof
