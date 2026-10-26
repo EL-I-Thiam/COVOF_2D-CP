@@ -313,9 +313,10 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
             val -= (shear_N - shear_S);
 
             // Terme de pénalité de Lagrangien augmenté : - r * d(div)/dx * dvol = - r * (div_E - div_W) * dy
-            double grad_div_x = (div_cell[c_idx(i, j)] - div_cell[c_idx(i - 1, j)]) * dy;
-            // Calcul et assignation numérique
-            val -= r_al * grad_div_x;
+            if (is_augmented_lagrangian()) {
+                double grad_div_x = (div_cell[c_idx(i, j)] - div_cell[c_idx(i - 1, j)]) * dy;
+                val -= r_al * grad_div_x;
+            }
 
             // Gradient de pression discret B_u^T (uniquement si monolithique)
             if (is_monolithic()) {
@@ -418,9 +419,10 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
             val -= (shear_E - shear_W);
 
             // Terme de pénalité de Lagrangien augmenté : - r * d(div)/dy * dvol = - r * (div_N - div_S) * dx
-            double grad_div_y = (div_cell[c_idx(i, j)] - div_cell[c_idx(i, j - 1)]) * dx;
-            // Calcul et assignation numérique
-            val -= r_al * grad_div_y;
+            if (is_augmented_lagrangian()) {
+                double grad_div_y = (div_cell[c_idx(i, j)] - div_cell[c_idx(i, j - 1)]) * dx;
+                val -= r_al * grad_div_y;
+            }
 
             // Gradient de pression discret B_v^T (uniquement si monolithique)
             if (is_monolithic()) {
@@ -449,10 +451,8 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
                 int dof = p_offset + (j - 1) * mesh.nx_local + (i - 1);
                 // Déclaration de variable typée
                 double div = div_cell[c_idx(i, j)] * dvol;
-                // Déclaration de variable typée
-                double diag_p_term = (dvol / r_al) * tf.p[mesh.cell_idx(i, j)];
                 // Calcul et assignation numérique
-                y[dof] = div - diag_p_term;
+                y[dof] = div;
             }
         }
     }
@@ -698,7 +698,7 @@ void NavierStokesSolver::assemble_rhs(const FlowFields& fields, double dt, std::
                 // Déclaration de variable typée
                 int dof = p_offset + (j - 1) * mesh.nx_local + (i - 1);
                 // Calcul et assignation numérique
-                rhs[dof] = - (dvol / r_al) * fields.p[mesh.cell_idx(i, j)];
+                rhs[dof] = 0.0;
             }
         }
     }
@@ -758,9 +758,8 @@ void NavierStokesSolver::assemble_preconditioner_blocks(const FlowFields& fields
             }
             // Déclaration de variable typée
             double mu_c = fields.mu[mesh.cell_idx(i, j)];
-            // Déclaration de variable typée
-            double d = (rho_u / dt) * dvol + 4.0 * mu_c * (dy / dx) + 2.0 * mu_c * (dx / dy) + 2.0 * r_al * (dy / dx);
-            // Calcul et assignation numérique
+            double al_u = is_augmented_lagrangian() ? 2.0 * r_al * (dy / dx) : 0.0;
+            double d = (rho_u / dt) * dvol + 4.0 * mu_c * (dy / dx) + 2.0 * mu_c * (dx / dy) + al_u;
             diag_u[dof] = (d > 1.0e-15) ? d : 1.0;
         }
     }
@@ -789,16 +788,15 @@ void NavierStokesSolver::assemble_preconditioner_blocks(const FlowFields& fields
             }
             // Déclaration de variable typée
             double mu_c = fields.mu[mesh.cell_idx(i, j)];
-            // Déclaration de variable typée
-            double d = (rho_v / dt) * dvol + 4.0 * mu_c * (dx / dy) + 2.0 * mu_c * (dy / dx) + 2.0 * r_al * (dx / dy);
-            // Calcul et assignation numérique
+            double al_v = is_augmented_lagrangian() ? 2.0 * r_al * (dx / dy) : 0.0;
+            double d = (rho_v / dt) * dvol + 4.0 * mu_c * (dx / dy) + 2.0 * mu_c * (dy / dx) + al_v;
             diag_v[dof] = (d > 1.0e-15) ? d : 1.0;
         }
     }
 
     // Évaluation de la condition de contrôle
     if (is_monolithic()) {
-        diag_p.assign(n_owned_p, dvol / r_al);
+        diag_p.assign(n_owned_p, 1.0);
     }
 }
 

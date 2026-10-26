@@ -96,18 +96,36 @@ public:
 };
 
 /**
- * @brief Préconditionneur par Blocs Triangulaires (Annexe E thèse M. El Ouafa / Tavares)
+ * @brief Préconditionneur par Blocs Triangulaires (Annexe E thèse M. El Ouafa / El Ouafa et al. 2023)
  * Dédié au système tout-couplé vitesse-pression avec approximation du complément de Schur.
+ *   P = [ D_u   G ]
+ *       [  0    S ]
+ * où S = G^T D^{-1} G - C_p (Laplacien discret diphasique à densité variable).
  */
 class BlockTriangularPreconditioner : public PreconditionerBase {
 public:
-    // Calcul et assignation numérique
     const NavierStokesSolver* ns_solver = nullptr;
+
+    int nx = 0;
+    int ny = 0;
+    double dx = 0.0;
+    double dy = 0.0;
+    double dvol = 0.0;
+    double r_al = 1000.0;
+    int n_sweeps = 4;
+
+    std::vector<double> a_E;
+    std::vector<double> a_W;
+    std::vector<double> a_N;
+    std::vector<double> a_S;
+    std::vector<double> a_P;
+
+    std::vector<double> u_aE, u_aW, u_aN, u_aS, u_aP;
+    std::vector<double> v_aE, v_aW, v_aN, v_aS, v_aP;
 
     void init(const NavierStokesSolver* solver) override;
     void update(const FlowFields& fields, double dt) override;
     void apply(const std::vector<double>& z, std::vector<double>& r) const override;
-    // Déclaration de variable typée
     std::string get_name() const override { return "BLOCK_TRIANGULAR"; }
 };
 

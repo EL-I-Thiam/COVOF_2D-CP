@@ -202,6 +202,7 @@ bool Simulation::init(MPI_Comm comm, const std::string& config_file) {
     // Calcul et assignation numérique
     precond = PreconditionerFactory::create(config.solver.precond_type);
     precond->init(&ns_solver);
+    precond->update(fields, config.dt);
 
     // Calcul et assignation numérique
     linear_solver = SolverFactory::create(config.solver.type);
@@ -334,6 +335,7 @@ void Simulation::run() {
 
         // 2. Assemblage des blocs du préconditionneur
         ns_solver.assemble_preconditioner_blocks(fields, dt);
+        precond->update(fields, dt);
 
         // Déclaration de variable typée
         int total_iters = 0;

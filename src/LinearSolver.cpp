@@ -752,7 +752,7 @@ std::unique_ptr<LinearSolverBase> SolverFactory::create(const std::string& type)
     std::transform(upper_type.begin(), upper_type.end(), upper_type.begin(), ::toupper);
 
     // Évaluation de la condition de contrôle
-    if (upper_type == "BICGSTAB2" || upper_type == "AUGMENTED_LAGRANGIAN") {
+    if (upper_type == "BICGSTAB2" || upper_type == "AUGMENTED_LAGRANGIAN" || upper_type == "MONOLITHIC") {
         // Retour de fonction
         return std::make_unique<BiCGSTAB2Solver>();
     // Calcul et assignation numérique
