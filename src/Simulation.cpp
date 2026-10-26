@@ -339,28 +339,33 @@ void Simulation::run() {
 
         // Déclaration de variable typée
         int total_iters = 0;
-        // Déclaration de variable typée
-        int uzawa_max = ns_solver.is_augmented_lagrangian() ? ns_solver.uzawa_iter : 1;
 
-        // Boucle d'itération algorithmique
-        for (int m = 0; m < uzawa_max; ++m) {
-            // 3. Construction du second membre rhs
-            ns_solver.assemble_rhs(fields, dt, rhs);
+        // Évaluation de la méthode de résolution Navier-Stokes
+        if (ns_solver.is_standard_projection()) {
+            total_iters = ns_solver.solve_standard_projection(fields, dt, *linear_solver, *precond);
+        } else {
+            int uzawa_max = ns_solver.is_augmented_lagrangian() ? ns_solver.uzawa_iter : 1;
 
-            // 4. Initialisation du vecteur d'état à partir des champs courants
-            ns_solver.pack_vector(fields, state_vector);
+            // Boucle d'itération algorithmique
+            for (int m = 0; m < uzawa_max; ++m) {
+                // 3. Construction du second membre rhs
+                ns_solver.assemble_rhs(fields, dt, rhs);
 
-            // 5. Résolution du système linéaire par le solveur sélectionné
-            int iters = linear_solver->solve(ns_solver, *precond, fields, dt, rhs, state_vector);
-            // Calcul et assignation numérique
-            total_iters += iters;
+                // 4. Initialisation du vecteur d'état à partir des champs courants
+                ns_solver.pack_vector(fields, state_vector);
 
-            // 6. Déballage de la vitesse résolue
-            ns_solver.unpack_vector(state_vector, fields);
+                // 5. Résolution du système linéaire par le solveur sélectionné
+                int iters = linear_solver->solve(ns_solver, *precond, fields, dt, rhs, state_vector);
+                // Calcul et assignation numérique
+                total_iters += iters;
 
-            // 7. Mise à jour de la pression par Lagrangien augmenté si applicable
-            if (ns_solver.is_augmented_lagrangian()) {
-                ns_solver.update_pressure_al(fields);
+                // 6. Déballage de la vitesse résolue
+                ns_solver.unpack_vector(state_vector, fields);
+
+                // 7. Mise à jour de la pression par Lagrangien augmenté si applicable
+                if (ns_solver.is_augmented_lagrangian()) {
+                    ns_solver.update_pressure_al(fields);
+                }
             }
         }
 

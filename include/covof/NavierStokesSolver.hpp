@@ -9,6 +9,9 @@
 namespace covof {
 namespace fugu = covof; // Alias rétrocompatibilité
 
+class LinearSolverBase;
+class PreconditionerBase;
+
 /**
  * @brief Opérateur couplé monolithique pour Navier-Stokes diphasique
  * Implémente l'action du système point-selle A * x et la construction du second membre b.
@@ -47,13 +50,15 @@ public:
     std::vector<Obstacle> obstacles;
 
     inline bool is_monolithic() const {
-        // Retour de fonction
         return (solver_type == "MONOLITHIC");
     }
 
     inline bool is_augmented_lagrangian() const {
-        // Retour de fonction
-        return (solver_type != "MONOLITHIC");
+        return (solver_type == "AUGMENTED_LAGRANGIAN");
+    }
+
+    inline bool is_standard_projection() const {
+        return (solver_type == "STANDARD_PROJECTION" || solver_type == "PROJECTION");
     }
 
     inline bool is_point_in_obstacle(double x, double y) const {
@@ -157,6 +162,16 @@ public:
      * @brief Met à jour le champ de pression via le Lagrangien augmenté : p^{n+1} = p^n - r * div(u^{n+1})
      */
     void update_pressure_al(FlowFields& fields) const;
+
+    /**
+     * @brief Résout un pas de temps par la méthode de Projection Standard (Chorin-Temam)
+     * 1. Prédiction visqueuse u* sans pression
+     * 2. Équation de Poisson pour la pression : div(1/rho grad p) = 1/dt div(u*)
+     * 3. Projection / correction de vitesse : u^{n+1} = u* - dt/rho grad p
+     */
+    int solve_standard_projection(FlowFields& fields, double dt,
+                                 const LinearSolverBase& linear_solver,
+                                 const PreconditionerBase& precond);
 
     /**
      * @brief Résout l'équation de transport-diffusion de la température T^{n+1}

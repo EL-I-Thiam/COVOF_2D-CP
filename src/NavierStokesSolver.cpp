@@ -1,5 +1,7 @@
 #include "covof/NavierStokesSolver.hpp"
 #include "covof/MpiComm.hpp"
+#include "covof/LinearSolver.hpp"
+#include "covof/Preconditioner.hpp"
 #include <cmath>
 #include <iostream>
 
@@ -54,7 +56,7 @@ void NavierStokesSolver::init(const Mesh2D& m, const Config& cfg) {
     n_owned_p = mesh.nx_local * mesh.ny_local;
 
     // Évaluation de la condition de contrôle
-    if (is_augmented_lagrangian()) {
+    if (is_augmented_lagrangian() || is_standard_projection()) {
         // Calcul et assignation numérique
         n_owned_total = n_owned_u + n_owned_v;
     } else {
@@ -723,6 +725,282 @@ void NavierStokesSolver::update_pressure_al(FlowFields& fields) const {
     }
 
     MpiComm::sync_cell_scalar(mesh, fields.p);
+}
+
+int NavierStokesSolver::solve_standard_projection(FlowFields& fields, double dt,
+                                                 const LinearSolverBase& linear_solver,
+                                                 const PreconditionerBase& precond) {
+    int nx = mesh.nx_local;
+    int ny = mesh.ny_local;
+    double dx = mesh.dx;
+    double dy = mesh.dy;
+    double dvol = dx * dy;
+    int np = nx * ny;
+
+    // =========================================================================
+    // 1. Étape de Prédiction : Résolution de la quantité de mouvement pour u* et v*
+    //    sans gradient de pression et sans pénalité de Lagrangien augmenté
+    // =========================================================================
+    assemble_preconditioner_blocks(fields, dt);
+
+    std::vector<double> rhs(n_owned_total, 0.0);
+    assemble_rhs(fields, dt, rhs);
+
+    std::vector<double> state_vec(n_owned_total, 0.0);
+    pack_vector(fields, state_vec);
+
+    int iters_u = linear_solver.solve(*this, precond, fields, dt, rhs, state_vec);
+    unpack_vector(state_vec, fields);
+
+    // =========================================================================
+    // 2. Étape de Poisson : Résolution de div( (dt/rho) * grad(p) ) = div(u*)
+    // =========================================================================
+    std::vector<double> a_W(np, 0.0);
+    std::vector<double> a_E(np, 0.0);
+    std::vector<double> a_S(np, 0.0);
+    std::vector<double> a_N(np, 0.0);
+    std::vector<double> a_P(np, 0.0);
+    std::vector<double> b_p(np, 0.0);
+
+    for (int j = 1; j <= ny; ++j) {
+        for (int i = 1; i <= nx; ++i) {
+            int c = (j - 1) * nx + (i - 1);
+
+            // Second membre : divergence de vitesse prédite intégrée sur la cellule (négative)
+            double div_u_star = (fields.u[mesh.u_idx(i + 1, j)] - fields.u[mesh.u_idx(i, j)]) * dy +
+                                (fields.v[mesh.v_idx(i, j + 1)] - fields.v[mesh.v_idx(i, j)]) * dx;
+            b_p[c] = -div_u_star;
+
+            // Face Ouest (u_i, j)
+            bool is_wall_W = (i == 1 && mesh.is_boundary_left &&
+                             (bc.left.type == BCType::DIRICHLET || bc.left.type == BCType::FREE_SLIP)) ||
+                             is_u_face_in_obstacle(i, j);
+            if (!is_wall_W) {
+                double rho_u = fields.rho_u[mesh.u_idx(i, j)];
+                if (rho_u < 1.0e-12) rho_u = 1.0;
+                a_W[c] = (dt * dy) / (rho_u * dx);
+            }
+
+            // Face Est (u_i+1, j)
+            bool is_wall_E = (i == nx && mesh.is_boundary_right &&
+                             (bc.right.type == BCType::DIRICHLET || bc.right.type == BCType::FREE_SLIP)) ||
+                             is_u_face_in_obstacle(i + 1, j);
+            if (!is_wall_E) {
+                double rho_u = fields.rho_u[mesh.u_idx(i + 1, j)];
+                if (rho_u < 1.0e-12) rho_u = 1.0;
+                a_E[c] = (dt * dy) / (rho_u * dx);
+            }
+
+            // Face Sud (v_i, j)
+            bool is_wall_S = (j == 1 && mesh.is_boundary_bottom &&
+                             (bc.bottom.type == BCType::DIRICHLET || bc.bottom.type == BCType::FREE_SLIP)) ||
+                             is_v_face_in_obstacle(i, j);
+            if (!is_wall_S) {
+                double rho_v = fields.rho_v[mesh.v_idx(i, j)];
+                if (rho_v < 1.0e-12) rho_v = 1.0;
+                a_S[c] = (dt * dx) / (rho_v * dy);
+            }
+
+            // Face Nord (v_i, j+1)
+            bool is_wall_N = (j == ny && mesh.is_boundary_top &&
+                             (bc.top.type == BCType::DIRICHLET || bc.top.type == BCType::FREE_SLIP)) ||
+                             is_v_face_in_obstacle(i, j + 1);
+            if (!is_wall_N) {
+                double rho_v = fields.rho_v[mesh.v_idx(i, j + 1)];
+                if (rho_v < 1.0e-12) rho_v = 1.0;
+                a_N[c] = (dt * dx) / (rho_v * dy);
+            }
+
+            // Diagonale avec régularisation infinitésimale pour fixer la jauge de pression
+            a_P[c] = a_W[c] + a_E[c] + a_S[c] + a_N[c] + 1.0e-12 * dvol;
+        }
+    }
+
+    // Résolution de A_p * p = b_p par Gradient Conjugué Préconditionné SSOR (PCG)
+    std::vector<double> p_sol(np, 0.0);
+    // Initialisation avec la pression précédente
+    for (int j = 1; j <= ny; ++j) {
+        for (int i = 1; i <= nx; ++i) {
+            p_sol[(j - 1) * nx + (i - 1)] = fields.p[mesh.cell_idx(i, j)];
+        }
+    }
+
+    auto matvec_p = [&](const std::vector<double>& x, std::vector<double>& y) {
+        y.assign(np, 0.0);
+        for (int j = 1; j <= ny; ++j) {
+            for (int i = 1; i <= nx; ++i) {
+                int c = (j - 1) * nx + (i - 1);
+                double val = a_P[c] * x[c];
+                if (i > 1) val -= a_W[c] * x[c - 1];
+                else if (bc.left.type == BCType::PERIODIC) val -= a_W[c] * x[(j - 1) * nx + (nx - 1)];
+
+                if (i < nx) val -= a_E[c] * x[c + 1];
+                else if (bc.right.type == BCType::PERIODIC) val -= a_E[c] * x[(j - 1) * nx];
+
+                if (j > 1) val -= a_S[c] * x[c - nx];
+                else if (bc.bottom.type == BCType::PERIODIC) val -= a_S[c] * x[(ny - 1) * nx + (i - 1)];
+
+                if (j < ny) val -= a_N[c] * x[c + nx];
+                else if (bc.top.type == BCType::PERIODIC) val -= a_N[c] * x[i - 1];
+
+                y[c] = val;
+            }
+        }
+    };
+
+    auto apply_ssor_p = [&](const std::vector<double>& r, std::vector<double>& z) {
+        z.assign(np, 0.0);
+        // Descente avant (Forward sweep)
+        for (int j = 1; j <= ny; ++j) {
+            for (int i = 1; i <= nx; ++i) {
+                int c = (j - 1) * nx + (i - 1);
+                double val = r[c];
+                if (i > 1) val += a_W[c] * z[c - 1];
+                else if (bc.left.type == BCType::PERIODIC) val += a_W[c] * z[(j - 1) * nx + (nx - 1)];
+
+                if (j > 1) val += a_S[c] * z[c - nx];
+                else if (bc.bottom.type == BCType::PERIODIC) val += a_S[c] * z[(ny - 1) * nx + (i - 1)];
+
+                z[c] = val / a_P[c];
+            }
+        }
+        // Remontée arrière (Backward sweep)
+        for (int j = ny; j >= 1; --j) {
+            for (int i = nx; i >= 1; --i) {
+                int c = (j - 1) * nx + (i - 1);
+                double val = a_P[c] * z[c];
+                if (i < nx) val += a_E[c] * z[c + 1];
+                else if (bc.right.type == BCType::PERIODIC) val += a_E[c] * z[(j - 1) * nx];
+
+                if (j < ny) val += a_N[c] * z[c + nx];
+                else if (bc.top.type == BCType::PERIODIC) val += a_N[c] * z[i - 1];
+
+                z[c] = val / a_P[c];
+            }
+        }
+    };
+
+    // Algorithme PCG
+    std::vector<double> r_p(np, 0.0), Ap_p(np, 0.0);
+    matvec_p(p_sol, Ap_p);
+
+    for (int c = 0; c < np; ++c) {
+        r_p[c] = b_p[c] - Ap_p[c];
+    }
+    double b_norm = MpiComm::global_norm2(mesh, b_p, np);
+    if (b_norm < 1.0e-30) b_norm = 1.0;
+
+    double r_norm = MpiComm::global_norm2(mesh, r_p, np);
+
+    int iters_p = 0;
+    const double tol_p = 1.0e-7;
+    const int max_iter_p = 1000;
+
+    if (r_norm / b_norm > tol_p) {
+        std::vector<double> z_p(np, 0.0);
+        apply_ssor_p(r_p, z_p);
+        std::vector<double> d_p = z_p;
+
+        double rz_old = MpiComm::global_dot_product(mesh, r_p, z_p, np);
+
+        for (int iter = 0; iter < max_iter_p; ++iter) {
+            iters_p++;
+            std::vector<double> Ad_p(np, 0.0);
+            matvec_p(d_p, Ad_p);
+
+            double dAd = MpiComm::global_dot_product(mesh, d_p, Ad_p, np);
+            if (std::abs(dAd) < 1.0e-35) break;
+
+            double alpha = rz_old / dAd;
+
+            for (int c = 0; c < np; ++c) {
+                p_sol[c] += alpha * d_p[c];
+                r_p[c]   -= alpha * Ad_p[c];
+            }
+            r_norm = MpiComm::global_norm2(mesh, r_p, np);
+
+            if (r_norm / b_norm <= tol_p) break;
+
+            apply_ssor_p(r_p, z_p);
+
+            double rz_new = MpiComm::global_dot_product(mesh, r_p, z_p, np);
+
+            if (std::abs(rz_old) < 1.0e-35) break;
+            double beta = rz_new / rz_old;
+            rz_old = rz_new;
+
+            for (int c = 0; c < np; ++c) {
+                d_p[c] = z_p[c] + beta * d_p[c];
+            }
+        }
+    }
+
+    // Référence de pression à moyenne nulle
+    double local_p_sum = 0.0;
+    for (int c = 0; c < np; ++c) local_p_sum += p_sol[c];
+    double p_total_sum = MpiComm::global_sum(mesh, local_p_sum);
+    double p_mean = p_total_sum / (mesh.nx_global * mesh.ny_global);
+    for (int c = 0; c < np; ++c) p_sol[c] -= p_mean;
+
+    // Mise à jour de fields.p
+    for (int j = 1; j <= ny; ++j) {
+        for (int i = 1; i <= nx; ++i) {
+            fields.p[mesh.cell_idx(i, j)] = p_sol[(j - 1) * nx + (i - 1)];
+        }
+    }
+
+    // =========================================================================
+    // 3. Étape de Correction / Projection de Vitesse : u = u* - (dt/rho) * grad(p)
+    // =========================================================================
+    int u_nx = nx + (mesh.is_boundary_right ? 1 : 0);
+    for (int j = 1; j <= ny; ++j) {
+        for (int i = 1; i <= u_nx; ++i) {
+            bool is_wall = (i == 1 && mesh.is_boundary_left && (bc.left.type == BCType::DIRICHLET || bc.left.type == BCType::FREE_SLIP)) ||
+                           (i == u_nx && mesh.is_boundary_right && (bc.right.type == BCType::DIRICHLET || bc.right.type == BCType::FREE_SLIP)) ||
+                           is_u_face_in_obstacle(i, j);
+            if (is_wall) continue;
+
+            double rho_u = fields.rho_u[mesh.u_idx(i, j)];
+            if (rho_u < 1.0e-12) rho_u = 1.0;
+
+            double p_w = (i > 1) ? fields.p[mesh.cell_idx(i - 1, j)] :
+                         (bc.left.type == BCType::PERIODIC ? fields.p[mesh.cell_idx(nx, j)] : fields.p[mesh.cell_idx(1, j)]);
+            double p_e = (i <= nx) ? fields.p[mesh.cell_idx(i, j)] :
+                         (bc.right.type == BCType::PERIODIC ? fields.p[mesh.cell_idx(1, j)] : fields.p[mesh.cell_idx(nx, j)]);
+
+            double grad_p_x = (p_e - p_w) / dx;
+            fields.u[mesh.u_idx(i, j)] -= (dt / rho_u) * grad_p_x;
+        }
+    }
+
+    int v_ny = ny + (mesh.is_boundary_top ? 1 : 0);
+    for (int j = 1; j <= v_ny; ++j) {
+        for (int i = 1; i <= nx; ++i) {
+            bool is_wall = (j == 1 && mesh.is_boundary_bottom && (bc.bottom.type == BCType::DIRICHLET || bc.bottom.type == BCType::FREE_SLIP)) ||
+                           (j == v_ny && mesh.is_boundary_top && (bc.top.type == BCType::DIRICHLET || bc.top.type == BCType::FREE_SLIP)) ||
+                           is_v_face_in_obstacle(i, j);
+            if (is_wall) continue;
+
+            double rho_v = fields.rho_v[mesh.v_idx(i, j)];
+            if (rho_v < 1.0e-12) rho_v = 1.0;
+
+            double p_s = (j > 1) ? fields.p[mesh.cell_idx(i, j - 1)] :
+                         (bc.bottom.type == BCType::PERIODIC ? fields.p[mesh.cell_idx(i, ny)] : fields.p[mesh.cell_idx(i, 1)]);
+            double p_n = (j <= ny) ? fields.p[mesh.cell_idx(i, j)] :
+                         (bc.top.type == BCType::PERIODIC ? fields.p[mesh.cell_idx(i, 1)] : fields.p[mesh.cell_idx(nx, j)]);
+
+            double grad_p_y = (p_n - p_s) / dy;
+            fields.v[mesh.v_idx(i, j)] -= (dt / rho_v) * grad_p_y;
+        }
+    }
+
+    // Synchronisation des mailles fantômes et application des CL
+    MpiComm::sync_u(mesh, fields.u);
+    MpiComm::sync_v(mesh, fields.v);
+    MpiComm::sync_cell_scalar(mesh, fields.p);
+    MpiComm::apply_boundary_conditions(mesh, bc, fields, false);
+
+    return iters_u + iters_p;
 }
 
 void NavierStokesSolver::assemble_preconditioner_blocks(const FlowFields& fields, double dt) {
