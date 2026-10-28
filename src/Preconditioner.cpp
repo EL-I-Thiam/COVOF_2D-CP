@@ -330,7 +330,10 @@ void BlockTriangularPreconditioner::update(const FlowFields& fields, double dt) 
                 a_N[c] = (dx * dx) / Dv;
             }
 
-            a_P[c] = a_W[c] + a_E[c] + a_S[c] + a_N[c] + 1.0e-12 * dvol;
+            int c_global = ns_solver->mesh.cell_idx(i, j);
+            double chi = (fields.chi_T.size() > (size_t)c_global) ? fields.chi_T[c_global] : 0.0;
+            double diag_comp = (ns_solver->compressible ? (chi / dt) : 0.0) * dvol;
+            a_P[c] = a_W[c] + a_E[c] + a_S[c] + a_N[c] + diag_comp + 1.0e-12 * dvol;
         }
     }
 }

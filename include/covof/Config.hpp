@@ -33,6 +33,13 @@ public:
     // Déclaration de variable typée
     double steady_state_tol = 0.0;       ///< Tolérance d'arrêt sur l'état stationnaire ||u^{n+1}-u^n||
 
+    // Formulation All-Mach / Compressible (Fluids 2024, El Ouafa et al.)
+    bool compressible = false;             ///< Activer la formulation compressible
+    std::string flow_regime = "INCOMPRESSIBLE"; ///< "INCOMPRESSIBLE" ou "COMPRESSIBLE"
+    bool enable_ssp_rk3_momentum = false;  ///< Transport inertiel SSP-RK3 préservant la quantité de mouvement
+    bool enable_diffusion_smoothing = false; ///< Lissage par diffusion parabolique pour courbure CSF
+    int diffusion_smoothing_steps = 3;     ///< Nombre d'itérations de diffusion pour C_tilde
+
     // Convection thermique Boussinesq (Cas 6.1)
     double Ra = 1.0e5;                   ///< Nombre de Rayleigh
     // Déclaration de variable typée

@@ -61,7 +61,19 @@ public:
         visc_mu0 = cfg.visc_mu0;
         // Options VOF
         vof_cfg = cfg.vof;
+        compressible = cfg.compressible;
+        enable_diffusion_smoothing = cfg.enable_diffusion_smoothing;
+        diffusion_smoothing_steps = cfg.diffusion_smoothing_steps;
     }
+
+    bool compressible = false;
+    bool enable_diffusion_smoothing = false;
+    int diffusion_smoothing_steps = 3;
+
+    /**
+     * @brief Lissage par diffusion parabolique pour courbure CSF (Fluids 2024, Étape 4)
+     */
+    void smooth_diffusion(const Mesh2D& mesh, FlowFields& fields);
 
     /**
      * @brief Initialise le champ de fraction volumique C selon la configuration

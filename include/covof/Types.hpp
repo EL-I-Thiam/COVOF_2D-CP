@@ -95,6 +95,16 @@ struct FluidProperties {
     double k_thermal = 0.026; ///< Conductivité thermique [W/(m.K)]
     // Déclaration de variable typée
     double beta = 3.33e-3;    ///< Coefficient de dilatation thermique volumique [1/K]
+
+    // Propriétés thermodynamiques et lois d'état (Fluids 2024 / All-Mach)
+    std::string eos = "INCOMPRESSIBLE"; ///< "INCOMPRESSIBLE", "LINEAR", "IDEAL_GAS", "NASG"
+    double chi_T = 0.0;                 ///< Compressibilité isotherme chi_T = (1/rho)*(drho/dp)_T [1/Pa]
+    double gamma = 1.4;                 ///< Rapport des capacités calorifiques cp/cv
+    double r_gas = 287.05;              ///< Constante massique des gaz parfaits [J/(kg.K)]
+    double cv = 717.5;                  ///< Capacité calorifique à volume constant [J/(kg.K)]
+    double p_inf = 0.0;                 ///< Pression de raideur de l'EOS NASG [Pa]
+    double b_nasg = 0.0;                ///< Covariable de volume b de l'EOS NASG [m^3/kg]
+    double q_nasg = 0.0;                ///< Énergie de référence q de l'EOS NASG [J/kg]
 };
 
 /**

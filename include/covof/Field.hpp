@@ -48,6 +48,19 @@ public:
     // Diagnostics
     std::vector<double> div_u;     ///< Divergence de la vitesse au centre des mailles
 
+    // Champs pour formulation compressible / All-Mach (Fluids 2024)
+    std::vector<double> chi_T;     ///< Compressibilité isotherme locale au centre des cellules [1/Pa]
+    std::vector<double> p_old;     ///< Pression au pas précédent p^n pour terme temporel / convectif
+    std::vector<double> T_old;     ///< Température au pas précédent
+    std::vector<double> u_old;     ///< Vitesse axiale au pas précédent pour extrapolation
+    std::vector<double> v_old;     ///< Vitesse transversale au pas précédent pour extrapolation
+    std::vector<double> energy;    ///< Énergie totale massique e = u + 0.5*||v||^2 [J/kg]
+    std::vector<double> rho_e;     ///< Énergie totale volumique rho*e [J/m^3]
+    std::vector<double> rhou_star; ///< Quantité de mouvement intermédiaire (rho*u)* après SSP-RK3
+    std::vector<double> rhov_star; ///< Quantité de mouvement intermédiaire (rho*v)* après SSP-RK3
+    std::vector<double> rhoe_star; ///< Énergie intermédiaire (rho*e)* après SSP-RK3
+    std::vector<double> C_tilde;   ///< Fraction volumique lissée par diffusion pour courbure CSF
+
     // Calcul et assignation numérique
     FlowFields() = default;
 
@@ -83,6 +96,18 @@ public:
         F_sigma_y.assign(n_v, 0.0);
 
         div_u.assign(n_cells, 0.0);
+
+        chi_T.assign(n_cells, 0.0);
+        p_old.assign(n_cells, 0.0);
+        T_old.assign(n_cells, 0.0);
+        u_old.assign(n_u, 0.0);
+        v_old.assign(n_v, 0.0);
+        energy.assign(n_cells, 0.0);
+        rho_e.assign(n_cells, 0.0);
+        rhou_star.assign(n_u, 0.0);
+        rhov_star.assign(n_v, 0.0);
+        rhoe_star.assign(n_cells, 0.0);
+        C_tilde.assign(n_cells, 0.0);
     }
 };
 

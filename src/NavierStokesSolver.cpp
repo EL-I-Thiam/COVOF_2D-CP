@@ -2,6 +2,7 @@
 #include "covof/MpiComm.hpp"
 #include "covof/LinearSolver.hpp"
 #include "covof/Preconditioner.hpp"
+#include "covof/EOS.hpp"
 #include <cmath>
 #include <iostream>
 
@@ -39,6 +40,8 @@ void NavierStokesSolver::init(const Mesh2D& m, const Config& cfg) {
     r_al = cfg.solver.r_al;
     // Calcul et assignation numérique
     uzawa_iter = cfg.solver.uzawa_iter;
+    compressible = cfg.compressible;
+    enable_ssp_rk3_momentum = cfg.enable_ssp_rk3_momentum;
     // Calcul et assignation numérique
     obstacles = cfg.obstacles;
 
@@ -453,8 +456,24 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
                 int dof = p_offset + (j - 1) * mesh.nx_local + (i - 1);
                 // Déclaration de variable typée
                 double div = div_cell[c_idx(i, j)] * dvol;
+                double val_p = div;
+
+                // Formulation Compressible / All-Mach (Fluids 2024, Éq. 12a)
+                if (compressible) {
+                    int c = mesh.cell_idx(i, j);
+                    double chi = (fields_old.chi_T.size() > (size_t)c) ? fields_old.chi_T[c] : 0.0;
+                    // Terme temporel implicite de pression (chi / dt) * p^{n+1}
+                    val_p += (chi / dt) * tf.p[c] * dvol;
+                    // Terme convectif chi * (v^{n+1} . grad(p^n))
+                    double u_c = 0.5 * (tf.u[mesh.u_idx(i, j)] + tf.u[mesh.u_idx(i + 1, j)]);
+                    double v_c = 0.5 * (tf.v[mesh.v_idx(i, j)] + tf.v[mesh.v_idx(i, j + 1)]);
+                    double dp_dx = (fields_old.p[mesh.cell_idx(i + 1, j)] - fields_old.p[mesh.cell_idx(i - 1, j)]) / (2.0 * dx);
+                    double dp_dy = (fields_old.p[mesh.cell_idx(i, j + 1)] - fields_old.p[mesh.cell_idx(i, j - 1)]) / (2.0 * dy);
+                    val_p += chi * (u_c * dp_dx + v_c * dp_dy) * dvol;
+                }
+
                 // Calcul et assignation numérique
-                y[dof] = div;
+                y[dof] = val_p;
             }
         }
     }
@@ -550,7 +569,10 @@ void NavierStokesSolver::assemble_rhs(const FlowFields& fields, double dt, std::
             }
 
             // Déclaration de variable typée
-            double val = (rho_u / dt) * fields.u[mesh.u_idx(i, j)] * dvol;
+            double u_inertial = (enable_ssp_rk3_momentum && fields.rhou_star.size() > (size_t)mesh.u_idx(i, j))
+                               ? fields.rhou_star[mesh.u_idx(i, j)]
+                               : (rho_u * fields.u[mesh.u_idx(i, j)]);
+            double val = (u_inertial / dt) * dvol;
             // Calcul et assignation numérique
             val += rho_u * gx * dvol;
             // Calcul et assignation numérique
@@ -648,7 +670,10 @@ void NavierStokesSolver::assemble_rhs(const FlowFields& fields, double dt, std::
             }
 
             // Déclaration de variable typée
-            double val = (rho_v / dt) * fields.v[mesh.v_idx(i, j)] * dvol;
+            double v_inertial = (enable_ssp_rk3_momentum && fields.rhov_star.size() > (size_t)mesh.v_idx(i, j))
+                               ? fields.rhov_star[mesh.v_idx(i, j)]
+                               : (rho_v * fields.v[mesh.v_idx(i, j)]);
+            double val = (v_inertial / dt) * dvol;
             // Calcul et assignation numérique
             val += rho_v * gy * dvol;
             // Évaluation de la condition de contrôle
@@ -689,7 +714,7 @@ void NavierStokesSolver::assemble_rhs(const FlowFields& fields, double dt, std::
         }
     }
 
-    // RHS pour p (si monolithique régularisé)
+    // RHS pour p (si monolithique régularisé ou compressible)
     if (is_monolithic()) {
         // Déclaration de variable typée
         int p_offset = n_owned_u + n_owned_v;
@@ -699,8 +724,15 @@ void NavierStokesSolver::assemble_rhs(const FlowFields& fields, double dt, std::
             for (int i = 1; i <= mesh.nx_local; ++i) {
                 // Déclaration de variable typée
                 int dof = p_offset + (j - 1) * mesh.nx_local + (i - 1);
+                double val_p = 0.0;
+                if (compressible) {
+                    int c = mesh.cell_idx(i, j);
+                    double chi = (fields.chi_T.size() > (size_t)c) ? fields.chi_T[c] : 0.0;
+                    // Éq. 12a RHS : (chi / dt) * p^n * dvol
+                    val_p = (chi / dt) * fields.p[c] * dvol;
+                }
                 // Calcul et assignation numérique
-                rhs[dof] = 0.0;
+                rhs[dof] = val_p;
             }
         }
     }
@@ -1408,6 +1440,244 @@ double NavierStokesSolver::compute_mean_nusselt_hot_wall(const FlowFields& field
     }
     // Retour de fonction
     return 1.0;
+}
+
+void NavierStokesSolver::advect_ssp_rk3_momentum(FlowFields& fields, double dt) const {
+    int nx = mesh.nx_local;
+    int ny = mesh.ny_local;
+    double dx = mesh.dx;
+    double dy = mesh.dy;
+
+    std::vector<double> u_adv1 = fields.u;
+    std::vector<double> v_adv1 = fields.v;
+    std::vector<double> u_adv2 = fields.u;
+    std::vector<double> v_adv2 = fields.v;
+
+    bool has_old_v = (!fields.u_old.empty() && fields.u_old.size() == fields.u.size());
+    if (has_old_v) {
+        for (size_t i = 0; i < fields.u.size(); ++i) {
+            u_adv1[i] = 2.0 * fields.u[i] - fields.u_old[i];
+            u_adv2[i] = 1.5 * fields.u[i] - 0.5 * fields.u_old[i];
+        }
+        for (size_t i = 0; i < fields.v.size(); ++i) {
+            v_adv1[i] = 2.0 * fields.v[i] - fields.v_old[i];
+            v_adv2[i] = 1.5 * fields.v[i] - 0.5 * fields.v_old[i];
+        }
+    }
+
+    auto div_flux_cell = [&](const std::vector<double>& phi, const std::vector<double>& u_adv, const std::vector<double>& v_adv, std::vector<double>& div_f) {
+        div_f.assign(phi.size(), 0.0);
+        for (int j = 1; j <= ny; ++j) {
+            for (int i = 1; i <= nx; ++i) {
+                int c = mesh.cell_idx(i, j);
+                double u_e = u_adv[mesh.u_idx(i + 1, j)];
+                double u_w = u_adv[mesh.u_idx(i, j)];
+                double v_n = v_adv[mesh.v_idx(i, j + 1)];
+                double v_s = v_adv[mesh.v_idx(i, j)];
+
+                double phi_e = (u_e >= 0.0) ? phi[c] : phi[mesh.cell_idx(i + 1, j)];
+                double phi_w = (u_w >= 0.0) ? phi[mesh.cell_idx(i - 1, j)] : phi[c];
+                double phi_n = (v_n >= 0.0) ? phi[c] : phi[mesh.cell_idx(i, j + 1)];
+                double phi_s = (v_s >= 0.0) ? phi[mesh.cell_idx(i, j - 1)] : phi[c];
+
+                double fx_e = u_e * phi_e;
+                double fx_w = u_w * phi_w;
+                double fy_n = v_n * phi_n;
+                double fy_s = v_s * phi_s;
+
+                div_f[c] = (fx_e - fx_w) / dx + (fy_n - fy_s) / dy;
+            }
+        }
+    };
+
+    auto div_flux_u = [&](const std::vector<double>& rhou, const std::vector<double>& u_adv, const std::vector<double>& v_adv, std::vector<double>& div_fu) {
+        div_fu.assign(rhou.size(), 0.0);
+        int u_nx = nx + (mesh.is_boundary_right ? 1 : 0);
+        for (int j = 1; j <= ny; ++j) {
+            for (int i = 1; i <= u_nx; ++i) {
+                int idx = mesh.u_idx(i, j);
+                double u_c = 0.5 * (u_adv[mesh.u_idx(i, j)] + ((i < nx + 1) ? u_adv[mesh.u_idx(i + 1, j)] : u_adv[mesh.u_idx(i, j)]));
+                double u_w = 0.5 * (u_adv[mesh.u_idx(i, j)] + ((i > 1) ? u_adv[mesh.u_idx(i - 1, j)] : u_adv[mesh.u_idx(i, j)]));
+
+                double v_node_n = 0.5 * (v_adv[mesh.v_idx(std::min(nx, i), j + 1)] + v_adv[mesh.v_idx(std::max(1, i - 1), j + 1)]);
+                double v_node_s = 0.5 * (v_adv[mesh.v_idx(std::min(nx, i), j)] + v_adv[mesh.v_idx(std::max(1, i - 1), j)]);
+
+                double val_e = (u_c >= 0.0) ? rhou[idx] : rhou[mesh.u_idx(std::min(nx + 1, i + 1), j)];
+                double val_w = (u_w >= 0.0) ? rhou[mesh.u_idx(std::max(1, i - 1), j)] : rhou[idx];
+                double val_n = (v_node_n >= 0.0) ? rhou[idx] : rhou[mesh.u_idx(i, std::min(ny, j + 1))];
+                double val_s = (v_node_s >= 0.0) ? rhou[mesh.u_idx(i, std::max(1, j - 1))] : rhou[idx];
+
+                div_fu[idx] = (u_c * val_e - u_w * val_w) / dx + (v_node_n * val_n - v_node_s * val_s) / dy;
+            }
+        }
+    };
+
+    auto div_flux_v = [&](const std::vector<double>& rhov, const std::vector<double>& u_adv, const std::vector<double>& v_adv, std::vector<double>& div_fv) {
+        div_fv.assign(rhov.size(), 0.0);
+        int v_ny = ny + (mesh.is_boundary_top ? 1 : 0);
+        for (int j = 1; j <= v_ny; ++j) {
+            for (int i = 1; i <= nx; ++i) {
+                int idx = mesh.v_idx(i, j);
+                double v_c = 0.5 * (v_adv[mesh.v_idx(i, j)] + ((j < ny + 1) ? v_adv[mesh.v_idx(i, j + 1)] : v_adv[mesh.v_idx(i, j)]));
+                double v_s = 0.5 * (v_adv[mesh.v_idx(i, j)] + ((j > 1) ? v_adv[mesh.v_idx(i, j - 1)] : v_adv[mesh.v_idx(i, j)]));
+
+                double u_node_e = 0.5 * (u_adv[mesh.u_idx(i + 1, std::min(ny, j))] + u_adv[mesh.u_idx(i + 1, std::max(1, j - 1))]);
+                double u_node_w = 0.5 * (u_adv[mesh.u_idx(i, std::min(ny, j))] + u_adv[mesh.u_idx(i, std::max(1, j - 1))]);
+
+                double val_e = (u_node_e >= 0.0) ? rhov[mesh.v_idx(std::max(1, i - 1), j)] : rhov[idx];
+                double val_w = (u_node_w >= 0.0) ? rhov[idx] : rhov[mesh.v_idx(std::min(nx, i + 1), j)];
+                double val_n = (v_c >= 0.0) ? rhov[idx] : rhov[mesh.v_idx(i, std::min(ny + 1, j + 1))];
+                double val_s = (v_s >= 0.0) ? rhov[mesh.v_idx(i, std::max(1, j - 1))] : rhov[idx];
+
+                div_fv[idx] = (u_node_e * val_w - u_node_w * val_e) / dx + (v_c * val_n - v_s * val_s) / dy;
+            }
+        }
+    };
+
+    std::vector<double> rho_n = fields.rho;
+    std::vector<double> div_rho;
+    div_flux_cell(rho_n, fields.u, fields.v, div_rho);
+    std::vector<double> rho_1(rho_n.size(), 0.0);
+    for (size_t c = 0; c < rho_n.size(); ++c) {
+        rho_1[c] = rho_n[c] - dt * div_rho[c];
+    }
+    div_flux_cell(rho_1, u_adv1, v_adv1, div_rho);
+    std::vector<double> rho_2(rho_n.size(), 0.0);
+    for (size_t c = 0; c < rho_n.size(); ++c) {
+        rho_2[c] = 0.75 * rho_n[c] + 0.25 * rho_1[c] - 0.25 * dt * div_rho[c];
+    }
+    div_flux_cell(rho_2, u_adv2, v_adv2, div_rho);
+    std::vector<double> rho_star(rho_n.size(), 0.0);
+    for (size_t c = 0; c < rho_n.size(); ++c) {
+        rho_star[c] = (1.0 / 3.0) * rho_n[c] + (2.0 / 3.0) * rho_2[c] - (2.0 / 3.0) * dt * div_rho[c];
+    }
+    fields.rho = rho_star;
+    MpiComm::sync_cell_scalar(mesh, fields.rho);
+
+    for (int j = 1; j <= ny; ++j) {
+        for (int i = 1; i <= nx + 1; ++i) {
+            fields.rho_u[mesh.u_idx(i, j)] = 0.5 * (fields.rho[mesh.cell_idx(i - 1, j)] + fields.rho[mesh.cell_idx(i, j)]);
+        }
+    }
+    for (int j = 1; j <= ny + 1; ++j) {
+        for (int i = 1; i <= nx; ++i) {
+            fields.rho_v[mesh.v_idx(i, j)] = 0.5 * (fields.rho[mesh.cell_idx(i, j - 1)] + fields.rho[mesh.cell_idx(i, j)]);
+        }
+    }
+
+    std::vector<double> rhou_n(fields.u.size(), 0.0);
+    for (size_t k = 0; k < fields.u.size(); ++k) {
+        rhou_n[k] = fields.rho_u[k] * fields.u[k];
+    }
+    std::vector<double> div_u_k;
+    div_flux_u(rhou_n, fields.u, fields.v, div_u_k);
+    std::vector<double> rhou_1(rhou_n.size(), 0.0);
+    for (size_t k = 0; k < rhou_n.size(); ++k) {
+        rhou_1[k] = rhou_n[k] - dt * div_u_k[k];
+    }
+    div_flux_u(rhou_1, u_adv1, v_adv1, div_u_k);
+    std::vector<double> rhou_2(rhou_n.size(), 0.0);
+    for (size_t k = 0; k < rhou_n.size(); ++k) {
+        rhou_2[k] = 0.75 * rhou_n[k] + 0.25 * rhou_1[k] - 0.25 * dt * div_u_k[k];
+    }
+    div_flux_u(rhou_2, u_adv2, v_adv2, div_u_k);
+    fields.rhou_star.resize(rhou_n.size(), 0.0);
+    for (size_t k = 0; k < rhou_n.size(); ++k) {
+        fields.rhou_star[k] = (1.0 / 3.0) * rhou_n[k] + (2.0 / 3.0) * rhou_2[k] - (2.0 / 3.0) * dt * div_u_k[k];
+    }
+
+    std::vector<double> rhov_n(fields.v.size(), 0.0);
+    for (size_t k = 0; k < fields.v.size(); ++k) {
+        rhov_n[k] = fields.rho_v[k] * fields.v[k];
+    }
+    std::vector<double> div_v_k;
+    div_flux_v(rhov_n, fields.u, fields.v, div_v_k);
+    std::vector<double> rhov_1(rhov_n.size(), 0.0);
+    for (size_t k = 0; k < rhov_n.size(); ++k) {
+        rhov_1[k] = rhov_n[k] - dt * div_v_k[k];
+    }
+    div_flux_v(rhov_1, u_adv1, v_adv1, div_v_k);
+    std::vector<double> rhov_2(rhov_n.size(), 0.0);
+    for (size_t k = 0; k < rhov_n.size(); ++k) {
+        rhov_2[k] = 0.75 * rhov_n[k] + 0.25 * rhov_1[k] - 0.25 * dt * div_v_k[k];
+    }
+    div_flux_v(rhov_2, u_adv2, v_adv2, div_v_k);
+    fields.rhov_star.resize(rhov_n.size(), 0.0);
+    for (size_t k = 0; k < rhov_n.size(); ++k) {
+        fields.rhov_star[k] = (1.0 / 3.0) * rhov_n[k] + (2.0 / 3.0) * rhov_2[k] - (2.0 / 3.0) * dt * div_v_k[k];
+    }
+
+    if (compressible) {
+        std::vector<double> rhoe_n(fields.rho.size(), 0.0);
+        for (size_t c = 0; c < fields.rho.size(); ++c) {
+            rhoe_n[c] = fields.rho[c] * fields.energy[c];
+        }
+        std::vector<double> div_e;
+        div_flux_cell(rhoe_n, fields.u, fields.v, div_e);
+        std::vector<double> rhoe_1(rhoe_n.size(), 0.0);
+        for (size_t c = 0; c < rhoe_n.size(); ++c) {
+            rhoe_1[c] = rhoe_n[c] - dt * div_e[c];
+        }
+        div_flux_cell(rhoe_1, u_adv1, v_adv1, div_e);
+        std::vector<double> rhoe_2(rhoe_n.size(), 0.0);
+        for (size_t c = 0; c < rhoe_n.size(); ++c) {
+            rhoe_2[c] = 0.75 * rhoe_n[c] + 0.25 * rhoe_1[c] - 0.25 * dt * div_e[c];
+        }
+        div_flux_cell(rhoe_2, u_adv2, v_adv2, div_e);
+        fields.rhoe_star.resize(rhoe_n.size(), 0.0);
+        for (size_t c = 0; c < rhoe_n.size(); ++c) {
+            fields.rhoe_star[c] = (1.0 / 3.0) * rhoe_n[c] + (2.0 / 3.0) * rhoe_2[c] - (2.0 / 3.0) * dt * div_e[c];
+        }
+    }
+}
+
+void NavierStokesSolver::solve_total_energy(FlowFields& fields, double dt) const {
+    if (!compressible) return;
+
+    int nx = mesh.nx_local;
+    int ny = mesh.ny_local;
+    double dx = mesh.dx;
+    double dy = mesh.dy;
+
+    for (int j = 1; j <= ny; ++j) {
+        for (int i = 1; i <= nx; ++i) {
+            int c = mesh.cell_idx(i, j);
+
+            double u_e = fields.u[mesh.u_idx(i + 1, j)];
+            double u_w = fields.u[mesh.u_idx(i, j)];
+            double v_n = fields.v[mesh.v_idx(i, j + 1)];
+            double v_s = fields.v[mesh.v_idx(i, j)];
+
+            double p_e = 0.5 * (fields.p[c] + fields.p[mesh.cell_idx(i + 1, j)]);
+            double p_w = 0.5 * (fields.p[c] + fields.p[mesh.cell_idx(i - 1, j)]);
+            double p_n = 0.5 * (fields.p[c] + fields.p[mesh.cell_idx(i, j + 1)]);
+            double p_s = 0.5 * (fields.p[c] + fields.p[mesh.cell_idx(i, j - 1)]);
+
+            double div_vp = (u_e * p_e - u_w * p_w) / dx + (v_n * p_n - v_s * p_s) / dy;
+
+            double uc = 0.5 * (u_e + u_w);
+            double vc = 0.5 * (v_n + v_s);
+            double v_sq = uc * uc + vc * vc;
+
+            double grav_work = fields.rho[c] * (gx * uc + gy * vc);
+
+            double rhoe_star_val = (fields.rhoe_star.size() > (size_t)c) ? fields.rhoe_star[c] : (fields.rho[c] * fields.energy[c]);
+            double rhoe_new = rhoe_star_val + dt * (-div_vp + grav_work);
+
+            double rho_new = std::max(1.0e-6, fields.rho[c]);
+            double e_new = rhoe_new / rho_new;
+
+            fields.rho_e[c] = rhoe_new;
+            fields.energy[c] = e_new;
+
+            double u_int = std::max(1.0, e_new - 0.5 * v_sq);
+            double gamma_eff = 1.4;
+            double r_eff = 287.05;
+            fields.T[c] = (gamma_eff - 1.0) / r_eff * u_int;
+        }
+    }
+    MpiComm::sync_cell_scalar(mesh, fields.energy);
+    MpiComm::sync_cell_scalar(mesh, fields.T);
 }
 
 } // namespace covof

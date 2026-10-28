@@ -326,7 +326,18 @@ void Simulation::run() {
             break;
         }
 
-        // 1. Transport de l'interface si écoulement diphasique
+        // Sauvegarde de l'état n pour dérivées temporelles et vitesse advectrice extrapolée
+        fields.u_old = fields.u;
+        fields.v_old = fields.v;
+        fields.p_old = fields.p;
+        fields.T_old = fields.T;
+
+        // Étape 1 : Transport inertiel préservant la quantité de mouvement (SSP-RK3, Fluids 2024)
+        if (config.enable_ssp_rk3_momentum) {
+            ns_solver.advect_ssp_rk3_momentum(fields, dt);
+        }
+
+        // Étape 2 : Transport de l'interface si écoulement diphasique
         if (config.enable_two_phase) {
             tracker.advect(mesh, fields, dt);
             // Actualisation des conditions aux limites pour les mailles fantômes
@@ -369,8 +380,10 @@ void Simulation::run() {
             }
         }
 
-        // 7.5 Résolution de l'énergie thermique si activée
-        if (config.enable_energy) {
+        // 7.5 Résolution de l'énergie (totale si compressible, thermique si Boussinesq)
+        if (config.compressible) {
+            ns_solver.solve_total_energy(fields, dt);
+        } else if (config.enable_energy) {
             ns_solver.solve_energy(fields, dt);
         }
 

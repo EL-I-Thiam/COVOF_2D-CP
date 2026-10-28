@@ -190,6 +190,16 @@ bool Config::load_from_json(const std::string& filepath) {
         enable_convection = get_bool(model_block, "enable_convection", enable_convection);
         // Calcul et assignation numérique
         enable_energy = get_bool(model_block, "enable_energy", enable_energy);
+        // Formulation compressible / All-Mach (Fluids 2024)
+        compressible = get_bool(model_block, "compressible", compressible);
+        flow_regime = get_string(model_block, "flow_regime", flow_regime);
+        if (flow_regime == "COMPRESSIBLE" || flow_regime == "ALL_MACH") {
+            compressible = true;
+        }
+        enable_ssp_rk3_momentum = get_bool(model_block, "enable_ssp_rk3_momentum", compressible ? true : enable_ssp_rk3_momentum);
+        enable_diffusion_smoothing = get_bool(model_block, "enable_diffusion_smoothing", enable_diffusion_smoothing);
+        diffusion_smoothing_steps = get_int(model_block, "diffusion_smoothing_steps", diffusion_smoothing_steps);
+
         // Calcul et assignation numérique
         sigma = get_double(model_block, "sigma", sigma);
         // Calcul et assignation numérique
@@ -229,6 +239,14 @@ bool Config::load_from_json(const std::string& filepath) {
             fluid1.k_thermal = get_double(f1_block, "k_thermal", fluid1.k_thermal);
             // Calcul et assignation numérique
             fluid1.beta = get_double(f1_block, "beta", fluid1.beta);
+            fluid1.eos = get_string(f1_block, "eos", fluid1.eos);
+            fluid1.chi_T = get_double(f1_block, "chi_T", fluid1.chi_T);
+            fluid1.gamma = get_double(f1_block, "gamma", fluid1.gamma);
+            fluid1.r_gas = get_double(f1_block, "r_gas", fluid1.r_gas);
+            fluid1.cv = get_double(f1_block, "cv", fluid1.cv);
+            fluid1.p_inf = get_double(f1_block, "p_inf", fluid1.p_inf);
+            fluid1.b_nasg = get_double(f1_block, "b_nasg", fluid1.b_nasg);
+            fluid1.q_nasg = get_double(f1_block, "q_nasg", fluid1.q_nasg);
         }
 
         // Déclaration de variable typée
@@ -245,6 +263,14 @@ bool Config::load_from_json(const std::string& filepath) {
             fluid2.k_thermal = get_double(f2_block, "k_thermal", fluid2.k_thermal);
             // Calcul et assignation numérique
             fluid2.beta = get_double(f2_block, "beta", fluid2.beta);
+            fluid2.eos = get_string(f2_block, "eos", fluid2.eos);
+            fluid2.chi_T = get_double(f2_block, "chi_T", fluid2.chi_T);
+            fluid2.gamma = get_double(f2_block, "gamma", fluid2.gamma);
+            fluid2.r_gas = get_double(f2_block, "r_gas", fluid2.r_gas);
+            fluid2.cv = get_double(f2_block, "cv", fluid2.cv);
+            fluid2.p_inf = get_double(f2_block, "p_inf", fluid2.p_inf);
+            fluid2.b_nasg = get_double(f2_block, "b_nasg", fluid2.b_nasg);
+            fluid2.q_nasg = get_double(f2_block, "q_nasg", fluid2.q_nasg);
         }
     }
 
@@ -469,11 +495,19 @@ void Config::print() const {
         }
     }
     // Calcul et assignation numérique
-    std::cout << " Fluide 1 : rho=" << fluid1.rho << " kg/m3, mu=" << fluid1.mu << " Pa.s\n";
+    std::cout << " Fluide 1 : rho=" << fluid1.rho << " kg/m3, mu=" << fluid1.mu << " Pa.s";
+    if (compressible) {
+        std::cout << " | EOS=" << fluid1.eos << ", chi_T=" << fluid1.chi_T << " Pa^-1, gamma=" << fluid1.gamma;
+    }
+    std::cout << "\n";
     // Évaluation de la condition de contrôle
     if (enable_two_phase) {
         // Calcul et assignation numérique
-        std::cout << " Fluide 2 : rho=" << fluid2.rho << " kg/m3, mu=" << fluid2.mu << " Pa.s\n"
+        std::cout << " Fluide 2 : rho=" << fluid2.rho << " kg/m3, mu=" << fluid2.mu << " Pa.s";
+        if (compressible) {
+            std::cout << " | EOS=" << fluid2.eos << ", chi_T=" << fluid2.chi_T << " Pa^-1, gamma=" << fluid2.gamma;
+        }
+        std::cout << "\n"
                   // Calcul et assignation numérique
                   << " Tension superficielle sigma = " << sigma << " N/m\n";
         if (vof.advection_method == "VOF_TVD" || vof.advection_method == "TVD") {

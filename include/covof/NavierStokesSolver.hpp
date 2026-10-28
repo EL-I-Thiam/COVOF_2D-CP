@@ -46,6 +46,9 @@ public:
     double r_al = 500.0;
     // Déclaration de variable typée
     int uzawa_iter = 1;
+    // Formulation compressible / All-Mach (Fluids 2024)
+    bool compressible = false;
+    bool enable_ssp_rk3_momentum = false;
     // Déclaration de variable typée
     std::vector<Obstacle> obstacles;
 
@@ -177,6 +180,16 @@ public:
      * @brief Résout l'équation de transport-diffusion de la température T^{n+1}
      */
     void solve_energy(FlowFields& fields, double dt) const;
+
+    /**
+     * @brief Advection inertielle SSP-RK3 préservant la quantité de mouvement (Étape 1 Fluids 2024)
+     */
+    void advect_ssp_rk3_momentum(FlowFields& fields, double dt) const;
+
+    /**
+     * @brief Résout l'équation de l'énergie totale (rho*e)^{n+1} (Étape 7 Fluids 2024, Éq. 13)
+     */
+    void solve_total_energy(FlowFields& fields, double dt) const;
 
     /**
      * @brief Calcule le nombre de Nusselt moyen sur la paroi chaude (x = 0)

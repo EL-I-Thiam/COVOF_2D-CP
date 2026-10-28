@@ -1,5 +1,6 @@
 #include "covof/InterfaceTracker.hpp"
 #include "covof/MpiComm.hpp"
+#include "covof/EOS.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -211,6 +212,16 @@ void InterfaceTracker::update_physical_properties(const Mesh2D& mesh, FlowFields
             fields.rho[idx] = c * fluid1.rho + (1.0 - c) * fluid2.rho;
             // Calcul de la résolution géométrique de cellule
             fields.mu[idx]  = c * fluid1.mu  + (1.0 - c) * fluid2.mu;
+
+            if (compressible) {
+                double p_val = (fields.p.size() > (size_t)idx) ? fields.p[idx] : 1.01325e5;
+                double T_val = (fields.T.size() > (size_t)idx) ? fields.T[idx] : 300.0;
+                double chi1 = EOS::compute_chi_T(EOS::parse_type(fluid1.eos), fluid1, p_val, T_val, fluid1.rho);
+                double chi2 = EOS::compute_chi_T(EOS::parse_type(fluid2.eos), fluid2, p_val, T_val, fluid2.rho);
+                if (fields.chi_T.size() > (size_t)idx) {
+                    fields.chi_T[idx] = c * chi1 + (1.0 - c) * chi2;
+                }
+            }
         }
     }
 
@@ -285,15 +296,16 @@ void InterfaceTracker::compute_curvature_and_CSF(const Mesh2D& mesh, FlowFields&
     double dy = mesh.dy;
 
     // 1. Calcul du gradient et du vecteur normal unitaire aux centres
+    const std::vector<double>& c_field = (enable_diffusion_smoothing && !fields.C_tilde.empty()) ? fields.C_tilde : fields.C;
     for (int j = 1; j <= ny; ++j) {
         // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
         for (int i = 1; i <= nx; ++i) {
             // Déclaration de variable typée
             int idx = mesh.cell_idx(i, j);
             // Déclaration de variable typée
-            double dC_dx = (fields.C[mesh.cell_idx(i + 1, j)] - fields.C[mesh.cell_idx(i - 1, j)]) / (2.0 * dx);
+            double dC_dx = (c_field[mesh.cell_idx(i + 1, j)] - c_field[mesh.cell_idx(i - 1, j)]) / (2.0 * dx);
             // Déclaration de variable typée
-            double dC_dy = (fields.C[mesh.cell_idx(i, j + 1)] - fields.C[mesh.cell_idx(i, j - 1)]) / (2.0 * dy);
+            double dC_dy = (c_field[mesh.cell_idx(i, j + 1)] - c_field[mesh.cell_idx(i, j - 1)]) / (2.0 * dy);
             // Déclaration de variable typée
             double grad_mag = std::sqrt(dC_dx * dC_dx + dC_dy * dC_dy);
             // Évaluation de la condition de contrôle
@@ -399,6 +411,9 @@ void InterfaceTracker::advect(const Mesh2D& mesh, FlowFields& fields, double dt)
 
     // Mise à jour des grandeurs physiques dérivées (masse volumique, viscosité, tension de surface)
     update_physical_properties(mesh, fields);
+    if (enable_diffusion_smoothing) {
+        smooth_diffusion(mesh, fields);
+    }
     compute_curvature_and_CSF(mesh, fields);
 }
 
@@ -747,6 +762,32 @@ void InterfaceTracker::advect_weymouth_yue(const Mesh2D& mesh, FlowFields& field
     }
 
     fields.C = C_final;
+}
+
+void InterfaceTracker::smooth_diffusion(const Mesh2D& mesh, FlowFields& fields) {
+    int nx = mesh.nx_local;
+    int ny = mesh.ny_local;
+    double dx = mesh.dx;
+    double dy = mesh.dy;
+
+    fields.C_tilde = fields.C;
+    double dtau = 0.2 * std::min(dx * dx, dy * dy);
+    std::vector<double> C_next = fields.C_tilde;
+
+    for (int step = 0; step < diffusion_smoothing_steps; ++step) {
+        MpiComm::sync_cell_scalar(mesh, fields.C_tilde);
+
+        for (int j = 1; j <= ny; ++j) {
+            for (int i = 1; i <= nx; ++i) {
+                int idx = mesh.cell_idx(i, j);
+                double lap_x = (fields.C_tilde[mesh.cell_idx(i + 1, j)] - 2.0 * fields.C_tilde[idx] + fields.C_tilde[mesh.cell_idx(i - 1, j)]) / (dx * dx);
+                double lap_y = (fields.C_tilde[mesh.cell_idx(i, j + 1)] - 2.0 * fields.C_tilde[idx] + fields.C_tilde[mesh.cell_idx(i, j - 1)]) / (dy * dy);
+                C_next[idx] = fields.C_tilde[idx] + dtau * (lap_x + lap_y);
+            }
+        }
+        fields.C_tilde = C_next;
+    }
+    MpiComm::sync_cell_scalar(mesh, fields.C_tilde);
 }
 
 } // namespace covof
