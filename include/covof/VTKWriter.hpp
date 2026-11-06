@@ -6,8 +6,6 @@
 #include <fstream>
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 /**
  * @brief Gestionnaire d'exportation pour ParaView (XML VTK .vtr/.pvtr) et diagnostics CSV
  */

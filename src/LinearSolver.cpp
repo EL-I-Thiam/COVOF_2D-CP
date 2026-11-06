@@ -5,10 +5,11 @@
 #include <cmath>
 #include <algorithm>
 #include <vector>
+#ifdef __APPLE__
+#include <Accelerate/Accelerate.h>
+#endif
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 // =============================================================================
 // Helper d'application du préconditionneur et de l'opérateur
 // =============================================================================
@@ -90,7 +91,7 @@ int BiCGSTAB2Solver::solve(const NavierStokesSolver& op, const PreconditionerBas
         // Demi-pas 1 (j = 0)
         double rho_1 = MpiComm::global_dot_product(mesh, r_tilde, r[0], n);
         // Évaluation de la condition de contrôle
-        if (std::abs(rho_0) < 1.0e-25) break;
+        if (std::abs(rho_0) < 1.0e-300) break;
         // Déclaration de variable typée
         double beta = alpha * (rho_1 / rho_0);
         // Calcul et assignation numérique
@@ -103,7 +104,7 @@ int BiCGSTAB2Solver::solve(const NavierStokesSolver& op, const PreconditionerBas
         // Déclaration de variable typée
         double gamma = MpiComm::global_dot_product(mesh, r_tilde, u[1], n);
         // Évaluation de la condition de contrôle
-        if (std::abs(gamma) < 1.0e-25) break;
+        if (std::abs(gamma) < 1.0e-300) break;
         // Calcul et assignation numérique
         alpha = rho_0 / gamma;
 
@@ -119,7 +120,7 @@ int BiCGSTAB2Solver::solve(const NavierStokesSolver& op, const PreconditionerBas
         // Demi-pas 2 (j = 1)
         rho_1 = MpiComm::global_dot_product(mesh, r_tilde, r[1], n);
         // Évaluation de la condition de contrôle
-        if (std::abs(rho_0) < 1.0e-25) break;
+        if (std::abs(rho_0) < 1.0e-300) break;
         // Calcul et assignation numérique
         beta = alpha * (rho_1 / rho_0);
         // Calcul et assignation numérique
@@ -137,7 +138,7 @@ int BiCGSTAB2Solver::solve(const NavierStokesSolver& op, const PreconditionerBas
         // Calcul et assignation numérique
         gamma = MpiComm::global_dot_product(mesh, r_tilde, u[2], n);
         // Évaluation de la condition de contrôle
-        if (std::abs(gamma) < 1.0e-25) break;
+        if (std::abs(gamma) < 1.0e-300) break;
         // Calcul et assignation numérique
         alpha = rho_0 / gamma;
 
@@ -192,7 +193,7 @@ int BiCGSTAB2Solver::solve(const NavierStokesSolver& op, const PreconditionerBas
             u[0][i] -= (gamma1 * u[1][i] + gamma2 * u[2][i]);
         }
         // Calcul et assignation numérique
-        omega = gamma2;
+        omega = (gamma2 != 0.0) ? gamma2 : ((std::abs(gamma1) > 1.0e-30) ? -gamma1 : 1.0);
 
         // Déclaration de variable typée
         double r_norm = MpiComm::global_norm2(mesh, r[0], n);
@@ -200,8 +201,7 @@ int BiCGSTAB2Solver::solve(const NavierStokesSolver& op, const PreconditionerBas
         if (std::isnan(r_norm) || std::isinf(r_norm)) break;
 
         // Évaluation de la condition de contrôle
-        if (r_norm / r0_norm < tol || r_norm < 1.0e-13) {
-            // Retour de fonction
+        if (r_norm / r0_norm < tol || r_norm < 1.0e-12) {
             return iter;
         }
     }
@@ -657,22 +657,128 @@ int MINRESSolver::solve(const NavierStokesSolver& op, const PreconditionerBase& 
 }
 
 // =============================================================================
-// 6. Solveur Direct Local / Bande LU
+// 6. Solveur Direct Exact par Décomposition LU (Équivalent MUMPS / LAPACK)
 // =============================================================================
+
 void DirectSolver::init(const SolverOptions& config) {
-    // Calcul et assignation numérique
     tol = config.tol;
-    // Calcul et assignation numérique
     max_iter = 1;
+    reset_cache();
 }
 
-// Déclaration de variable typée
 int DirectSolver::solve(const NavierStokesSolver& op, const PreconditionerBase& P,
                         const FlowFields& fields_old, double dt,
                         const std::vector<double>& b, std::vector<double>& x) const {
-    // Résolution directe locale par élimination de Gauss-Jacobi
-    apply_P(P, true, b, x);
-    // Retour de fonction
+    int n = op.n_owned_total;
+    if (n <= 0) return 0;
+
+    // Le cache n'est autorisé QUE pour un système stationnaire/linéaire à matrice strictement constante
+    bool can_use_cache = (!op.enable_two_phase) && (!op.enable_convection) &&
+                         (!op.compressible) && (!op.enable_energy) &&
+                         (op.viscosity_model == "CONSTANT");
+
+    bool needs_factor = (!can_use_cache || !is_factored || cached_n != n || std::abs(cached_dt - dt) > 1.0e-14);
+
+    if (needs_factor) {
+        // 1. Assemblage complet de la matrice du système linéaire A par colonnes
+        A_fact.assign(static_cast<size_t>(n) * n, 0.0);
+        std::vector<double> e(n, 0.0);
+        std::vector<double> col(n, 0.0);
+
+        for (int j = 0; j < n; ++j) {
+            e[j] = 1.0;
+            op.apply_system_matrix(fields_old, dt, e, col);
+            e[j] = 0.0;
+            for (int i = 0; i < n; ++i) {
+                A_fact[static_cast<size_t>(j) * n + i] = col[i]; // Stockage column-major pour LAPACK
+            }
+        }
+
+        ipiv_cached.assign(n, 0);
+
+#ifdef __APPLE__
+        int info = 0;
+        dgetrf_(&n, &n, A_fact.data(), &n, ipiv_cached.data(), &info);
+        if (info == 0) {
+            cached_n = n;
+            cached_dt = dt;
+            is_factored = can_use_cache;
+        } else {
+            std::cerr << "AVERTISSEMENT: dgetrf_ a echoue avec code " << info << std::endl;
+        }
+#endif
+    }
+
+    x = b;
+
+#ifdef __APPLE__
+    if (is_factored) {
+        char trans = 'N';
+        int nrhs = 1;
+        int lda = n;
+        int ldb = n;
+        int info = 0;
+        dgetrs_(&trans, &n, &nrhs, A_fact.data(), &lda, ipiv_cached.data(), x.data(), &ldb, &info);
+        if (info == 0) {
+            return 1;
+        }
+    }
+#endif
+
+    // Repli autonome : Factorisation LU directe avec pivotage partiel (PA = LU)
+    std::vector<double> A_local = A_fact;
+    std::vector<int> ipiv_local(n);
+    for (int i = 0; i < n; ++i) ipiv_local[i] = i;
+
+    for (int k = 0; k < n; ++k) {
+        int pivot = k;
+        double max_val = std::abs(A_local[static_cast<size_t>(k) * n + k]);
+        for (int i = k + 1; i < n; ++i) {
+            double val = std::abs(A_local[static_cast<size_t>(k) * n + i]);
+            if (val > max_val) {
+                max_val = val;
+                pivot = i;
+            }
+        }
+        if (pivot != k) {
+            std::swap(ipiv_local[k], ipiv_local[pivot]);
+            for (int j = 0; j < n; ++j) {
+                std::swap(A_local[static_cast<size_t>(j) * n + k], A_local[static_cast<size_t>(j) * n + pivot]);
+            }
+        }
+        double akk = A_local[static_cast<size_t>(k) * n + k];
+        if (std::abs(akk) > 1.0e-30) {
+            for (int i = k + 1; i < n; ++i) {
+                A_local[static_cast<size_t>(k) * n + i] /= akk;
+                double factor = A_local[static_cast<size_t>(k) * n + i];
+                for (int j = k + 1; j < n; ++j) {
+                    A_local[static_cast<size_t>(j) * n + i] -= factor * A_local[static_cast<size_t>(j) * n + k];
+                }
+            }
+        }
+    }
+
+    std::vector<double> pb(n);
+    for (int i = 0; i < n; ++i) {
+        pb[i] = b[ipiv_local[i]];
+    }
+
+    // Descente (Ly = pb)
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < i; ++j) {
+            pb[i] -= A_local[static_cast<size_t>(j) * n + i] * pb[j];
+        }
+    }
+
+    // Remontée (Ux = y)
+    for (int i = n - 1; i >= 0; --i) {
+        for (int j = i + 1; j < n; ++j) {
+            pb[i] -= A_local[static_cast<size_t>(j) * n + i] * x[j];
+        }
+        double akk = A_local[static_cast<size_t>(i) * n + i];
+        x[i] = (std::abs(akk) > 1.0e-30) ? (pb[i] / akk) : 0.0;
+    }
+
     return 1;
 }
 
@@ -752,7 +858,8 @@ std::unique_ptr<LinearSolverBase> SolverFactory::create(const std::string& type)
     std::transform(upper_type.begin(), upper_type.end(), upper_type.begin(), ::toupper);
 
     // Évaluation de la condition de contrôle
-    if (upper_type == "BICGSTAB2" || upper_type == "AUGMENTED_LAGRANGIAN" || upper_type == "MONOLITHIC" ||
+    if (upper_type == "BICGSTAB2" || upper_type == "BICGSTAB(2)" || upper_type == "BICGSTAB (2)" ||
+        upper_type == "BICGSTAB_2" || upper_type == "AUGMENTED_LAGRANGIAN" || upper_type == "MONOLITHIC" ||
         upper_type == "STANDARD_PROJECTION" || upper_type == "PROJECTION") {
         // Retour de fonction
         return std::make_unique<BiCGSTAB2Solver>();

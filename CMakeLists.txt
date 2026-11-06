@@ -31,18 +31,22 @@ set(SOURCES
     src/main.cpp
 )
 
-# Executable target: covof2d
-add_executable(covof2d ${SOURCES})
-target_link_libraries(covof2d PRIVATE MPI::MPI_CXX)
+# Executable target: covof2d_cpp
+add_executable(covof2d_cpp ${SOURCES})
+if(APPLE)
+    target_link_libraries(covof2d_cpp PRIVATE MPI::MPI_CXX "-framework Accelerate")
+else()
+    target_link_libraries(covof2d_cpp PRIVATE MPI::MPI_CXX)
+endif()
 
-set_target_properties(covof2d PROPERTIES
+set_target_properties(covof2d_cpp PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin"
 )
 
-# Create compatibility symlink/target for fugu2d
-add_custom_command(TARGET covof2d POST_BUILD
+# Convenience symlink for scripts expecting covof2d
+add_custom_command(TARGET covof2d_cpp POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E create_symlink
+        ${CMAKE_CURRENT_SOURCE_DIR}/bin/covof2d_cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/bin/covof2d
-        ${CMAKE_CURRENT_SOURCE_DIR}/bin/fugu2d
-    COMMENT "Creating compatibility symlink bin/fugu2d -> bin/covof2d"
+    COMMENT "Creating convenience symlink bin/covof2d -> bin/covof2d_cpp"
 )

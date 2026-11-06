@@ -6,8 +6,6 @@
 #include "InterfaceReconstruction.hpp"
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 /**
  * @brief Module de capture d'interface et de calcul de la tension de surface (Modèle CSF)
  */
@@ -40,7 +38,10 @@ public:
     // Calcul et assignation numérique
     InterfaceTracker() = default;
 
+    DomainBC bc;
+
     void init(const Config& cfg) {
+        bc = cfg.bc;
         // Calcul et assignation numérique
         fluid1 = cfg.fluid1;
         // Calcul et assignation numérique
@@ -64,11 +65,20 @@ public:
         compressible = cfg.compressible;
         enable_diffusion_smoothing = cfg.enable_diffusion_smoothing;
         diffusion_smoothing_steps = cfg.diffusion_smoothing_steps;
+        enable_svof_smoothing = cfg.enable_svof_smoothing;
+        svof_filter_width = cfg.svof_filter_width;
     }
 
     bool compressible = false;
     bool enable_diffusion_smoothing = false;
     int diffusion_smoothing_steps = 3;
+    bool enable_svof_smoothing = false;
+    double svof_filter_width = 1.0;
+
+    /**
+     * @brief Lissage SVOF de la fonction couleur par filtre de Helmholtz (Fluids 2021, Éq. 4-5)
+     */
+    void smooth_svof_helmholtz(const Mesh2D& mesh, FlowFields& fields);
 
     /**
      * @brief Lissage par diffusion parabolique pour courbure CSF (Fluids 2024, Étape 4)

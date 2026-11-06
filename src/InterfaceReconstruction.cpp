@@ -5,8 +5,6 @@
 #include <iostream>
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 // =============================================================================
 // PARSING DES MÉTHODES ET LIMITATEURS
 // =============================================================================
@@ -237,8 +235,21 @@ void InterfaceReconstruction::reconstruct_plic(const Mesh2D& mesh, const std::ve
             }
 
             double norm = std::hypot(mx, my);
-            double pnx = (norm > 1.0e-12) ? mx / norm : 1.0;
-            double pny = (norm > 1.0e-12) ? my / norm : 0.0;
+            double pnx = 0.0, pny = 1.0;
+            if (norm > 1.0e-12) {
+                pnx = mx / norm;
+                pny = my / norm;
+            } else {
+                double dy_diff = (j >= 1 && j <= ny) ? (C[mesh.cell_idx(i, j + 1)] - C[mesh.cell_idx(i, j - 1)]) : 0.0;
+                double dx_diff = (i >= 1 && i <= nx) ? (C[mesh.cell_idx(i + 1, j)] - C[mesh.cell_idx(i - 1, j)]) : 0.0;
+                if (std::abs(dy_diff) >= std::abs(dx_diff)) {
+                    pnx = 0.0;
+                    pny = (dy_diff < 0.0) ? 1.0 : -1.0;
+                } else {
+                    pnx = (dx_diff < 0.0) ? 1.0 : -1.0;
+                    pny = 0.0;
+                }
+            }
 
             double xmin = mesh.xv(i);
             double xmax = mesh.xv(i + 1);

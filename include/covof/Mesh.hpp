@@ -4,8 +4,6 @@
 #include <vector>
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 /**
  * @brief Maillage 2D cartésien décalé (MAC) partitionné en sous-domaines MPI
  */

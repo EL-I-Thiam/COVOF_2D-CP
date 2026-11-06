@@ -4,8 +4,6 @@
 #include <string>
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 /**
  * @brief Structure complète regroupant tous les paramètres de simulation
  */
@@ -22,12 +20,17 @@ public:
 
     // Équations résolues et modèles physiques
     std::string mode = "NAVIER_STOKES";  ///< "NAVIER_STOKES", "LAPLACIAN", "VORTEX_ADVECTION"
+    std::string test_case = "CAS_3_1";   ///< "CAS_3_1", "CAS_3_2_NEUMANN", etc.
     // Déclaration de variable typée
     bool enable_two_phase = false;       ///< Modèle diphasique (true) ou monophasique (false)
     // Déclaration de variable typée
     bool enable_surface_tension = false; ///< Activer la force capillaire CSF
     // Déclaration de variable typée
     bool enable_convection = true;       ///< Activer le transport convectif (Navier-Stokes vs Stokes)
+    std::string convective_scheme = "UPWIND"; ///< Schéma convectif ("UPWIND", "CENTERED", "TVD_SUPERBEE")
+    std::string convective_linearization = "PICARD"; ///< "PICARD", "ADAMS_BASHFORTH", "AB2", "NEWTON" (Fluids 2021)
+    bool enable_svof_smoothing = false;  ///< Lissage SVOF Helmholtz de la fonction couleur pour rho et mu (Éq. 4-5 Fluids 2021)
+    double svof_filter_width = 1.0;      ///< Facteur k pour filtre Helmholtz D = k * dx * dy
     // Déclaration de variable typée
     bool enable_energy = false;          ///< Activer l'équation de l'énergie (température T)
     // Déclaration de variable typée
@@ -58,6 +61,9 @@ public:
     // Déclaration de variable typée
     double visc_mu0 = 1.85e-5;
 
+    // Terme source scalaire pour le mode LAPLACIAN (-Delta Psi = -f)
+    double source_term = 1.0;
+
     // Obstacles immergés (Pénalisation de Brinkman)
     std::vector<Obstacle> obstacles;
 
@@ -72,6 +78,7 @@ public:
     double gy = 0.0;         ///< Gravité selon Y [m/s^2]
 
     // Intégration temporelle
+    std::string time_scheme = "EULER"; ///< "EULER", "GEAR", "BDF2"
     double dt = 0.001;       ///< Pas de temps initial [s]
     // Déclaration de variable typée
     double t_final = 1.0;    ///< Temps physique final [s]

@@ -7,8 +7,6 @@
 #include <functional>
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 class NavierStokesSolver;
 class FlowFields;
 
@@ -122,6 +120,12 @@ public:
 
     std::vector<double> u_aE, u_aW, u_aN, u_aS, u_aP;
     std::vector<double> v_aE, v_aW, v_aN, v_aS, v_aP;
+
+    mutable std::vector<double> r_p;
+    mutable std::vector<double> rhs_u;
+    mutable std::vector<double> rhs_v;
+    mutable std::vector<double> r_u;
+    mutable std::vector<double> r_v;
 
     void init(const NavierStokesSolver* solver) override;
     void update(const FlowFields& fields, double dt) override;

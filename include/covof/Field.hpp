@@ -4,8 +4,6 @@
 #include <vector>
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 /**
  * @brief Champs scalaires et vectoriels sur la grille décalée MAC
  * Tous les champs contiennent une couche de mailles fantômes pour le parallélisme MPI.
@@ -45,8 +43,9 @@ public:
     // Déclaration de variable typée
     std::vector<double> F_sigma_y; ///< Force capillaire CSF selon Y sur les faces v
 
-    // Diagnostics
+    // Diagnostics et pénalité locale AAL (Vincent et al. 2004, Éq. 14)
     std::vector<double> div_u;     ///< Divergence de la vitesse au centre des mailles
+    std::vector<double> r_aal;     ///< Paramètre de pénalité adaptatif local r(t, M) au centre des mailles [Pa.s]
 
     // Champs pour formulation compressible / All-Mach (Fluids 2024)
     std::vector<double> chi_T;     ///< Compressibilité isotherme locale au centre des cellules [1/Pa]
@@ -54,6 +53,15 @@ public:
     std::vector<double> T_old;     ///< Température au pas précédent
     std::vector<double> u_old;     ///< Vitesse axiale au pas précédent pour extrapolation
     std::vector<double> v_old;     ///< Vitesse transversale au pas précédent pour extrapolation
+    std::vector<double> u_nm1;     ///< Vitesse axiale au pas n-1 (Gear / BDF2 / Adams-Bashforth)
+    std::vector<double> v_nm1;     ///< Vitesse transversale au pas n-1
+    std::vector<double> rho_old;   ///< Masse volumique au pas précédent
+    std::vector<double> rho_u_old; ///< Masse volumique sur les faces u au pas précédent
+    std::vector<double> rho_v_old; ///< Masse volumique sur les faces v au pas précédent
+    std::vector<double> rho_u_nm1; ///< Masse volumique faces u au pas n-1
+    std::vector<double> rho_v_nm1; ///< Masse volumique faces v au pas n-1
+    std::vector<double> C_s;       ///< Fraction volumique lissée SVOF (Éq. 4-5 Fluids 2021)
+    bool has_nm1 = false;          ///< Vrai dès le pas 2 (autorise Gear / AB2)
     std::vector<double> energy;    ///< Énergie totale massique e = u + 0.5*||v||^2 [J/kg]
     std::vector<double> rho_e;     ///< Énergie totale volumique rho*e [J/m^3]
     std::vector<double> rhou_star; ///< Quantité de mouvement intermédiaire (rho*u)* après SSP-RK3
@@ -81,7 +89,7 @@ public:
         v.assign(n_v, 0.0);
         p.assign(n_cells, 0.0);
         C.assign(n_cells, 0.0);
-        T.assign(n_cells, 0.0);
+        T.assign(n_cells, 300.0);
 
         rho.assign(n_cells, 1.0);
         rho_u.assign(n_u, 1.0);
@@ -96,12 +104,22 @@ public:
         F_sigma_y.assign(n_v, 0.0);
 
         div_u.assign(n_cells, 0.0);
+        r_aal.assign(n_cells, 500.0);
 
         chi_T.assign(n_cells, 0.0);
         p_old.assign(n_cells, 0.0);
-        T_old.assign(n_cells, 0.0);
+        T_old.assign(n_cells, 300.0);
         u_old.assign(n_u, 0.0);
         v_old.assign(n_v, 0.0);
+        u_nm1.assign(n_u, 0.0);
+        v_nm1.assign(n_v, 0.0);
+        rho_old.assign(n_cells, 1.0);
+        rho_u_old.assign(n_u, 1.0);
+        rho_v_old.assign(n_v, 1.0);
+        rho_u_nm1.assign(n_u, 1.0);
+        rho_v_nm1.assign(n_v, 1.0);
+        C_s.assign(n_cells, 0.0);
+        has_nm1 = false;
         energy.assign(n_cells, 0.0);
         rho_e.assign(n_cells, 0.0);
         rhou_star.assign(n_u, 0.0);

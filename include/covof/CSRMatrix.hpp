@@ -4,8 +4,6 @@
 #include <vector>
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 /**
  * @brief Structure de matrice creuse locale au format Compressed Sparse Row (CSR)
  * Utilisée pour les blocs de préconditionnement (Fuu, Fvv, Laplacien de Schur).

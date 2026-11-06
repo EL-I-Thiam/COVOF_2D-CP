@@ -6,8 +6,6 @@
 #include <cmath>
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 void VTKWriter::init(const Mesh2D& mesh, const std::string& out_dir, const std::string& name) {
     // Calcul et assignation numérique
     output_dir = out_dir;
@@ -74,6 +72,18 @@ void VTKWriter::write_step(const Mesh2D& mesh, const FlowFields& fields, int ste
             vtr << "\n";
         }
         vtr << "        </DataArray>\n";
+
+        // PhaseIndicator_Smoothed C_s (SVOF)
+        if (!fields.C_s.empty()) {
+            vtr << "        <DataArray type=\"Float64\" Name=\"PhaseIndicator_Smoothed\" format=\"ascii\">\n";
+            for (int j = 1; j <= mesh.ny_local; ++j) {
+                for (int i = 1; i <= mesh.nx_local; ++i) {
+                    vtr << fields.C_s[mesh.cell_idx(i, j)] << " ";
+                }
+                vtr << "\n";
+            }
+            vtr << "        </DataArray>\n";
+        }
 
         // Pressure p
         vtr << "        <DataArray type=\"Float64\" Name=\"Pressure\" format=\"ascii\">\n";
@@ -300,8 +310,14 @@ void VTKWriter::write_diagnostics(const Mesh2D& mesh, const FlowFields& fields, 
 
             // Déclaration de variable typée
             double speed2 = uc * uc + vc * vc;
-            // Calcul et assignation numérique
-            local_ke += 0.5 * fields.rho[mesh.cell_idx(i, j)] * speed2 * dvol;
+            // Énergie cinétique discrète au nœud de pression (Thèse Éqs. 4.44, 4.46-4.47)
+            double u_L = fields.u[mesh.u_idx(i, j)];
+            double u_R = fields.u[mesh.u_idx(i + 1, j)];
+            double v_B = fields.v[mesh.v_idx(i, j)];
+            double v_T = fields.v[mesh.v_idx(i, j + 1)];
+            double u2p = 0.5 * (u_L * u_L + u_R * u_R);
+            double v2p = 0.5 * (v_B * v_B + v_T * v_T);
+            local_ke += 0.5 * fields.rho[mesh.cell_idx(i, j)] * (u2p + v2p) * dvol;
 
             // Déclaration de variable typée
             double speed = std::sqrt(speed2);

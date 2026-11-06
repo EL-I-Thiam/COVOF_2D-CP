@@ -4,11 +4,10 @@
 #include "Field.hpp"
 #include "Config.hpp"
 #include "CSRMatrix.hpp"
+#include "EOS.hpp"
 #include <vector>
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 class LinearSolverBase;
 class PreconditionerBase;
 
@@ -21,7 +20,10 @@ public:
     Mesh2D mesh;
     DomainBC bc;
     // Déclaration de variable typée
+    bool enable_two_phase = false;
     bool enable_convection = true;
+    std::string convective_scheme = "UPWIND";
+    std::string viscosity_model = "CONSTANT";
     // Déclaration de variable typée
     bool enable_energy = false;
     // Déclaration de variable typée
@@ -42,18 +44,34 @@ public:
     double Pr = 0.71;
     // Déclaration de variable typée
     std::string solver_type = "AUGMENTED_LAGRANGIAN";
+    std::string time_scheme = "EULER"; ///< "EULER", "GEAR", "BDF2"
+    std::string convective_linearization = "PICARD"; ///< "PICARD", "ADAMS_BASHFORTH", "AB2", "NEWTON"
     // Déclaration de variable typée
     double r_al = 500.0;
+    bool adaptative_al = false;
+    double k_aal = 100.0;
+    double uzawa_tol = 1.0e-12;
+    double l0_ref = 0.0;
+    double t0_ref = 0.0;
+    double u0_ref = 0.0;
+    double p0_ref = 0.0;
+    double sigma_surf = 0.0;
     // Déclaration de variable typée
     int uzawa_iter = 1;
     // Formulation compressible / All-Mach (Fluids 2024)
     bool compressible = false;
     bool enable_ssp_rk3_momentum = false;
+    FluidProperties fluid1;
+    FluidProperties fluid2;
     // Déclaration de variable typée
     std::vector<Obstacle> obstacles;
 
     inline bool is_monolithic() const {
         return (solver_type == "MONOLITHIC");
+    }
+
+    inline bool is_gear() const {
+        return (time_scheme == "GEAR" || time_scheme == "BDF2");
     }
 
     inline bool is_augmented_lagrangian() const {
@@ -98,6 +116,24 @@ public:
         return is_point_in_obstacle(x, y);
     }
 
+    inline double get_u_obstacle_perm(int i, int j) const {
+        double x = mesh.xu(i);
+        double y = mesh.yc(j);
+        for (const auto& obs : obstacles) {
+            bool in = false;
+            if (obs.type == "CYLINDER") {
+                double dx = x - obs.xc;
+                double dy = y - obs.yc;
+                in = (dx * dx + dy * dy <= obs.radius * obs.radius);
+            } else {
+                in = (x >= obs.x0 - 1e-9 && x <= obs.x1 + 1e-9 &&
+                      y >= obs.y0 - 1e-9 && y <= obs.y1 + 1e-9);
+            }
+            if (in) return obs.permeability;
+        }
+        return 0.0;
+    }
+
     inline bool is_v_face_in_obstacle(int i, int j) const {
         // Déclaration de variable typée
         double x = mesh.xc(i);
@@ -105,6 +141,24 @@ public:
         double y = mesh.yv(j);
         // Retour de fonction
         return is_point_in_obstacle(x, y);
+    }
+
+    inline double get_v_obstacle_perm(int i, int j) const {
+        double x = mesh.xc(i);
+        double y = mesh.yv(j);
+        for (const auto& obs : obstacles) {
+            bool in = false;
+            if (obs.type == "CYLINDER") {
+                double dx = x - obs.xc;
+                double dy = y - obs.yc;
+                in = (dx * dx + dy * dy <= obs.radius * obs.radius);
+            } else {
+                in = (x >= obs.x0 - 1e-9 && x <= obs.x1 + 1e-9 &&
+                      y >= obs.y0 - 1e-9 && y <= obs.y1 + 1e-9);
+            }
+            if (in) return obs.permeability;
+        }
+        return 0.0;
     }
 
     // Dimensions locales des inconnues propres (sans duplication)
@@ -126,6 +180,9 @@ public:
     std::vector<double> diag_v;
     // Déclaration de variable typée
     std::vector<double> diag_p;
+
+    mutable FlowFields tf_scratch;
+    mutable std::vector<double> div_cell_scratch;
 
     // Calcul et assignation numérique
     NavierStokesSolver() = default;
@@ -160,6 +217,11 @@ public:
      * @brief Déballe le vecteur 1D distribué dans les champs décalés (u, v, p)
      */
     void unpack_vector(const std::vector<double>& vec, FlowFields& fields, bool homogeneous = false) const;
+
+    /**
+     * @brief Calcule le champ de pénalité adaptatif r(t, M) (Vincent et al. 2004, Éq. 14)
+     */
+    void compute_adaptative_r_al(FlowFields& fields, double dt) const;
 
     /**
      * @brief Met à jour le champ de pression via le Lagrangien augmenté : p^{n+1} = p^n - r * div(u^{n+1})

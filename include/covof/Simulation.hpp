@@ -10,8 +10,6 @@
 #include "VTKWriter.hpp"
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 /**
  * @brief Orchestrateur principal de la simulation CFD diphasique tout-couplée 2D
  */
@@ -43,6 +41,21 @@ public:
      * @brief Résout le problème de vérification du Laplacien analytique (Cas 3.1 Référence Académique)
      */
     void run_laplacian();
+
+    /**
+     * @brief Résout le problème du Laplacien avec conditions de Neumann non homogènes
+     */
+    void run_laplacian_cas3_2();
+
+    /**
+     * @brief Exporte les résultats et calculs d'erreurs pour le cas de Poiseuille stationnaire
+     */
+    void export_poiseuille_results(int total_step, double final_time, double cpu_time);
+
+    /**
+     * @brief Exporte les résultats et calculs d'erreurs pour le cas de Poiseuille instationnaire
+     */
+    void export_poiseuille_unsteady_results(int total_step, double final_time, double cpu_time);
 
     /**
      * @brief Résout le problème d'advection d'une tâche dans un vortex avec cisaillement (Cas 3.19 Référence Académique)

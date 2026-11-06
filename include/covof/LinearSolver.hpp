@@ -7,8 +7,6 @@
 #include <memory>
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 class NavierStokesSolver;
 class FlowFields;
 
@@ -162,6 +160,20 @@ public:
     double tol = 1.0e-12;
     // Déclaration de variable typée
     int max_iter = 1;
+
+    mutable std::vector<double> A_fact;
+    mutable std::vector<int> ipiv_cached;
+    mutable int cached_n = 0;
+    mutable double cached_dt = 0.0;
+    mutable bool is_factored = false;
+
+    void reset_cache() const {
+        is_factored = false;
+        cached_n = 0;
+        cached_dt = 0.0;
+        A_fact.clear();
+        ipiv_cached.clear();
+    }
 
     void init(const SolverOptions& config) override;
     // Déclaration de variable typée

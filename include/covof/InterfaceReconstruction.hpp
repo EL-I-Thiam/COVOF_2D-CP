@@ -5,8 +5,6 @@
 #include <vector>
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 /**
  * @brief Énumération des méthodes de reconstruction géométrique d'interface
  */

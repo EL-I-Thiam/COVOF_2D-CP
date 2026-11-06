@@ -3,8 +3,6 @@
 #include <cmath>
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 void MpiComm::sync_cell_scalar(const Mesh2D& mesh, std::vector<double>& field) {
     // Déclaration de variable typée
     int nx = mesh.nx_local;
@@ -120,13 +118,25 @@ void MpiComm::sync_cell_scalar(const Mesh2D& mesh, std::vector<double>& field) {
 }
 
 void MpiComm::sync_u(const Mesh2D& mesh, std::vector<double>& u) {
-    // Évaluation de la condition de contrôle
-    if (mesh.num_procs == 1) return;
-
-    // Déclaration de variable typée
     int nx = mesh.nx_local;
-    // Déclaration de variable typée
     int ny = mesh.ny_local;
+
+    // Traitement séquentiel avec périodicité
+    if (mesh.num_procs == 1) {
+        if (!mesh.is_boundary_left) {
+            for (int j = 1; j <= ny; ++j) {
+                u[mesh.u_idx(0, j)]      = u[mesh.u_idx(nx, j)];
+                u[mesh.u_idx(nx + 1, j)] = u[mesh.u_idx(1, j)];
+            }
+        }
+        if (!mesh.is_boundary_bottom) {
+            for (int i = 0; i <= nx + 1; ++i) {
+                u[mesh.u_idx(i, 0)]      = u[mesh.u_idx(i, ny)];
+                u[mesh.u_idx(i, ny + 1)] = u[mesh.u_idx(i, 1)];
+            }
+        }
+        return;
+    }
 
     // u est défini sur les faces verticales i de 1 à nx+1 pour l'intérieur
     std::vector<double> send_left(ny), recv_left(ny);
@@ -220,13 +230,25 @@ void MpiComm::sync_u(const Mesh2D& mesh, std::vector<double>& u) {
 }
 
 void MpiComm::sync_v(const Mesh2D& mesh, std::vector<double>& v) {
-    // Évaluation de la condition de contrôle
-    if (mesh.num_procs == 1) return;
-
-    // Déclaration de variable typée
     int nx = mesh.nx_local;
-    // Déclaration de variable typée
     int ny = mesh.ny_local;
+
+    // Traitement séquentiel avec périodicité
+    if (mesh.num_procs == 1) {
+        if (!mesh.is_boundary_left) {
+            for (int j = 0; j <= ny + 1; ++j) {
+                v[mesh.v_idx(0, j)]      = v[mesh.v_idx(nx, j)];
+                v[mesh.v_idx(nx + 1, j)] = v[mesh.v_idx(1, j)];
+            }
+        }
+        if (!mesh.is_boundary_bottom) {
+            for (int i = 1; i <= nx; ++i) {
+                v[mesh.v_idx(i, 0)]      = v[mesh.v_idx(i, ny)];
+                v[mesh.v_idx(i, ny + 1)] = v[mesh.v_idx(i, 1)];
+            }
+        }
+        return;
+    }
 
     // v est défini sur les faces horizontales j de 1 à ny+1 pour l'intérieur
     std::vector<double> send_left(ny + 2), recv_left(ny + 2);
@@ -494,8 +516,12 @@ void MpiComm::apply_boundary_conditions(const Mesh2D& mesh, const DomainBC& bc, 
                 if (!homogeneous) f.v[mesh.v_idx(i, 1)] = v_bottom_val;
                 // Calcul de la résolution géométrique de cellule
                 f.v[mesh.v_idx(i, 0)] = v_bottom_val;
-                // Calcul de la résolution géométrique de cellule
-                f.u[mesh.u_idx(i, 0)] = 2.0 * u_bottom_val - f.u[mesh.u_idx(i, 1)];
+                // Extrapolation quadratique d'ordre 2 à la paroi (formule 3 points exacte pour profils paraboliques de Poiseuille)
+                if (ny >= 2) {
+                    f.u[mesh.u_idx(i, 0)] = (8.0 * u_bottom_val - 6.0 * f.u[mesh.u_idx(i, 1)] + f.u[mesh.u_idx(i, 2)]) / 3.0;
+                } else {
+                    f.u[mesh.u_idx(i, 0)] = 2.0 * u_bottom_val - f.u[mesh.u_idx(i, 1)];
+                }
             // Calcul et assignation numérique
             } else if (bc.bottom.type == BCType::FREE_SLIP) {
                 // Évaluation de la condition de contrôle
@@ -565,8 +591,12 @@ void MpiComm::apply_boundary_conditions(const Mesh2D& mesh, const DomainBC& bc, 
                 if (!homogeneous) f.v[mesh.v_idx(i, ny + 1)] = v_top_val;
                 // Calcul de la résolution géométrique de cellule
                 f.v[mesh.v_idx(i, ny + 2)] = v_top_val;
-                // Calcul de la résolution géométrique de cellule
-                f.u[mesh.u_idx(i, ny + 1)] = 2.0 * u_top_val - f.u[mesh.u_idx(i, ny)];
+                // Extrapolation quadratique d'ordre 2 à la paroi (formule 3 points exacte pour profils paraboliques de Poiseuille)
+                if (ny >= 2) {
+                    f.u[mesh.u_idx(i, ny + 1)] = (8.0 * u_top_val - 6.0 * f.u[mesh.u_idx(i, ny)] + f.u[mesh.u_idx(i, ny - 1)]) / 3.0;
+                } else {
+                    f.u[mesh.u_idx(i, ny + 1)] = 2.0 * u_top_val - f.u[mesh.u_idx(i, ny)];
+                }
                 // Calcul de la résolution géométrique de cellule
                 f.C[mesh.cell_idx(i, ny + 1)] = f.C[mesh.cell_idx(i, ny)];
             // Calcul et assignation numérique

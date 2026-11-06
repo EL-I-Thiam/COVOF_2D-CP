@@ -6,8 +6,6 @@
 #include <vector>
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 /**
  * @brief Gestionnaire des communications MPI et des échanges de mailles fantômes (halos)
  */

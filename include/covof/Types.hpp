@@ -6,8 +6,6 @@
 #include <cmath>
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 /**
  * @brief Types de conditions aux limites physiques (Annexe B thèse M. El Ouafa)
  */
@@ -115,6 +113,7 @@ enum class InitialConditionType {
     SINGLE_PHASE,    ///< Écoulement monophasique (C = 1 partout)
     DROPLET,         ///< Goutte (Fluide 1 à l'intérieur, Fluide 2 à l'extérieur)
     BUBBLE,          ///< Bulle (Fluide 2 à l'intérieur, Fluide 1 à l'extérieur)
+    CYLINDER,        ///< Cylindre rigide/dense net avec intégration géométrique PLIC (Cas 3.1 Fluids 2021)
     DAM_BREAK,       ///< Colonne rectangulaire d'eau (rupture de barrage)
     SHEAR_LAYER,     ///< Nappe liquide cisaillée avec perturbation
     LIQUID_SHEET,    ///< Nappe liquide cisaillée périodique (Cas 3.2 Fluids 2021)
@@ -151,6 +150,7 @@ struct InitialConditionConfig {
     double thickness = 0.0003; ///< Épaisseur de la nappe liquide (Cas 3.2 Fluids 2021) [m]
     // Déclaration de variable typée pour la largeur du jet liquide
     double jet_width = 0.08;   ///< Largeur du jet liquide injecté (Cas 3.3 Fluids 2021) [m]
+    double p_init    = 0.0;    ///< Pression thermodynamique initiale [Pa] (1.01325e5 si compressible)
 };
 
 /**
@@ -158,15 +158,24 @@ struct InitialConditionConfig {
  */
 struct SolverOptions {
     // Déclaration de variable typée
-    std::string type = "AUGMENTED_LAGRANGIAN"; ///< AUGMENTED_LAGRANGIAN ou MONOLITHIC
+    std::string type = "AUGMENTED_LAGRANGIAN"; ///< AUGMENTED_LAGRANGIAN, ADAPTATIVE_AUGMENTED_LAGRANGIAN (AAL), MONOLITHIC
+    std::string linear_solver = "BICGSTAB2";   ///< BICGSTAB2, DIRECT, MUMPS, CG, etc.
     // Déclaration de variable typée
     double tol = 1.0e-7;                        ///< Résidu relatif d'arrêt ||r_k|| / ||r_0||
     // Déclaration de variable typée
     int max_iter = 1000;                        ///< Nombre maximum d'itérations
     // Déclaration de variable typée
-    double r_al = 500.0;                        ///< Paramètre de pénalité de divergence r [Pa.s ou kg/(m.s)]
+    double r_al = 500.0;                        ///< Paramètre de pénalité constant r [Pa.s] (si non-adaptatif)
+    // Paramètres du Lagrangien Augmenté Adaptatif (Vincent et al., Computers & Fluids 33, 2004, Éq. 10 & 14)
+    bool adaptative_al = false;                 ///< Activer r(t, M) adaptatif spatio-temporel (Éq. 14)
+    double k_aal = 100.0;                       ///< Facteur d'amplification K in [10, 1000] (Éq. 14)
+    double uzawa_tol = 1.0e-12;                 ///< Seuil d'arrêt d'Uzawa sur ||div(u^{*,m})||_inf (Éq. 10)
+    double l0_ref = 0.0;                        ///< Échelle de longueur L0 [m] (0 = auto)
+    double t0_ref = 0.0;                        ///< Échelle de temps t0 [s] (0 = auto = dt)
+    double u0_ref = 0.0;                        ///< Échelle de vitesse u0 [m/s] (0 = auto)
+    double p0_ref = 0.0;                        ///< Échelle de pression p0 [Pa] (0 = auto)
     // Déclaration de variable typée
-    int uzawa_iter = 1;                         ///< Nombre d'itérations d'Uzawa-Lagrangien augmenté
+    int uzawa_iter = 1;                         ///< Nombre maximum d'itérations d'Uzawa par pas de temps
     // Déclaration de variable typée
     bool use_precond = true;                    ///< Activer le préconditionneur
     // Déclaration de variable typée

@@ -6,8 +6,6 @@
 #include <cctype>
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 // Fonctions utilitaires locales pour parser le JSON simplement
 static std::string trim(const std::string& str) {
     // Déclaration de variable typée
@@ -154,15 +152,33 @@ bool Config::load_from_json(const std::string& filepath) {
         // Retour de fonction
         return false;
     }
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    // Déclaration de variable typée
-    std::string json = buffer.str();
+    std::string line;
+    std::string json = "";
+    while (std::getline(file, line)) {
+        size_t cpos = line.find("//");
+        if (cpos != std::string::npos) {
+            line = line.substr(0, cpos);
+        }
+        json += line + "\n";
+    }
 
     // 0. Mode global et arrêt stationnaire
     mode = get_string(json, "mode", mode);
+    test_case = get_string(json, "test_case", test_case);
+    time_scheme = get_string(json, "time_scheme", time_scheme);
+    convective_linearization = get_string(json, "convective_linearization", convective_linearization);
+    enable_svof_smoothing = get_bool(json, "enable_svof_smoothing", enable_svof_smoothing);
+    svof_filter_width = get_double(json, "svof_filter_width", svof_filter_width);
     // Calcul de la résolution géométrique de cellule
     steady_state_tol = get_double(json, "steady_state_tol", steady_state_tol);
+    source_term = get_double(json, "source_term", source_term);
+    source_term = get_double(json, "f", source_term);
+
+    std::string lap_block = extract_value(json, "laplacian");
+    if (!lap_block.empty()) {
+        source_term = get_double(lap_block, "source_term", source_term);
+        source_term = get_double(lap_block, "f", source_term);
+    }
 
     // 1. Maillage
     std::string mesh_block = extract_value(json, "mesh");
@@ -188,6 +204,10 @@ bool Config::load_from_json(const std::string& filepath) {
         enable_surface_tension = get_bool(model_block, "enable_surface_tension", enable_surface_tension);
         // Calcul et assignation numérique
         enable_convection = get_bool(model_block, "enable_convection", enable_convection);
+        convective_scheme = get_string(model_block, "convective_scheme", convective_scheme);
+        convective_linearization = get_string(model_block, "convective_linearization", convective_linearization);
+        enable_svof_smoothing = get_bool(model_block, "enable_svof_smoothing", enable_svof_smoothing);
+        svof_filter_width = get_double(model_block, "svof_filter_width", svof_filter_width);
         // Calcul et assignation numérique
         enable_energy = get_bool(model_block, "enable_energy", enable_energy);
         // Formulation compressible / All-Mach (Fluids 2024)
@@ -215,6 +235,10 @@ bool Config::load_from_json(const std::string& filepath) {
         T_ref = get_double(model_block, "T_ref", T_ref);
         // Calcul et assignation numérique
         beta = get_double(model_block, "beta", beta);
+
+        // Terme source scalaire pour le mode LAPLACIAN
+        source_term = get_double(model_block, "source_term", source_term);
+        source_term = get_double(model_block, "f", source_term);
 
         // Calcul et assignation numérique
         viscosity_model = get_string(model_block, "viscosity_model", viscosity_model);
@@ -279,6 +303,7 @@ bool Config::load_from_json(const std::string& filepath) {
     // Évaluation de la condition de contrôle
     if (!time_block.empty()) {
         // Calcul et assignation numérique
+        time_scheme = get_string(time_block, "time_scheme", time_scheme);
         dt = get_double(time_block, "dt", dt);
         // Calcul et assignation numérique
         t_final = get_double(time_block, "t_final", t_final);
@@ -315,14 +340,19 @@ bool Config::load_from_json(const std::string& filepath) {
 
     // 5. Condition initiale
     std::string ic_block = extract_value(json, "initial_condition");
+    if (ic_block.empty()) {
+        ic_block = extract_value(json, "initial_conditions");
+    }
     // Évaluation de la condition de contrôle
     if (!ic_block.empty()) {
         // Déclaration de variable typée
         std::string type_str = get_string(ic_block, "type", "SINGLE_PHASE");
         // Évaluation de la condition de contrôle
         if (type_str == "DROPLET") init_cond.type = InitialConditionType::DROPLET;
-        // Branche alternative conditionnelle pour bulle ou cylindre immergé
-        else if (type_str == "BUBBLE" || type_str == "CYLINDER") init_cond.type = InitialConditionType::BUBBLE;
+        // Branche alternative conditionnelle pour cylindre immergé (Cas 3.1 Fluids 2021)
+        else if (type_str == "CYLINDER") init_cond.type = InitialConditionType::CYLINDER;
+        // Branche alternative conditionnelle pour bulle
+        else if (type_str == "BUBBLE") init_cond.type = InitialConditionType::BUBBLE;
         // Branche alternative conditionnelle
         else if (type_str == "DAM_BREAK") init_cond.type = InitialConditionType::DAM_BREAK;
         // Branche alternative conditionnelle pour nappe liquide (Cas 3.2 Fluids 2021)
@@ -360,6 +390,8 @@ bool Config::load_from_json(const std::string& filepath) {
         init_cond.thickness = get_double(ic_block, "thickness", init_cond.thickness);
         // Calcul et assignation de la largeur du jet liquide
         init_cond.jet_width = get_double(ic_block, "jet_width", init_cond.jet_width);
+        init_cond.p_init = get_double(ic_block, "p_init", init_cond.p_init);
+        init_cond.p_init = get_double(ic_block, "p0", init_cond.p_init);
     }
 
     // 6. Solveur linéaire
@@ -368,18 +400,46 @@ bool Config::load_from_json(const std::string& filepath) {
     if (!sol_block.empty()) {
         // Calcul et assignation numérique
         solver.type = get_string(sol_block, "type", solver.type);
-        // Calcul et assignation numérique
+        solver.linear_solver = get_string(sol_block, "linear_solver", "BICGSTAB2");
+        if (solver.type == "DIRECT") {
+            solver.type = "AUGMENTED_LAGRANGIAN";
+            solver.linear_solver = "DIRECT";
+        }
+        if (solver.type == "ADAPTATIVE_AUGMENTED_LAGRANGIAN" ||
+            solver.type == "ADAPTIVE_AUGMENTED_LAGRANGIAN" ||
+            solver.type == "AAL") {
+            solver.type = "AUGMENTED_LAGRANGIAN";
+            solver.adaptative_al = true;
+        }
         solver.tol = get_double(sol_block, "tol", solver.tol);
         // Calcul et assignation numérique
         solver.max_iter = get_int(sol_block, "max_iter", solver.max_iter);
         // Calcul et assignation numérique
         solver.r_al = get_double(sol_block, "r_al", solver.r_al);
+        solver.adaptative_al = get_bool(sol_block, "adaptative_al", solver.adaptative_al);
+        solver.adaptative_al = get_bool(sol_block, "adaptative_r", solver.adaptative_al);
+        solver.k_aal = get_double(sol_block, "k_aal", solver.k_aal);
+        solver.k_aal = get_double(sol_block, "r_factor", solver.k_aal);
+        solver.uzawa_tol = get_double(sol_block, "uzawa_tol", solver.uzawa_tol);
+        solver.l0_ref = get_double(sol_block, "l0_ref", solver.l0_ref);
+        solver.t0_ref = get_double(sol_block, "t0_ref", solver.t0_ref);
+        solver.u0_ref = get_double(sol_block, "u0_ref", solver.u0_ref);
+        solver.p0_ref = get_double(sol_block, "p0_ref", solver.p0_ref);
         // Calcul et assignation numérique
         solver.uzawa_iter = get_int(sol_block, "uzawa_iter", solver.uzawa_iter);
         // Calcul et assignation numérique
         solver.use_precond = get_bool(sol_block, "use_precond", solver.use_precond);
         // Calcul et assignation numérique
         solver.precond_type = get_string(sol_block, "precond_type", solver.precond_type);
+        std::string prec_alias = get_string(sol_block, "preconditioner", "");
+        if (!prec_alias.empty()) solver.precond_type = prec_alias;
+
+        std::string p_up = solver.precond_type;
+        std::transform(p_up.begin(), p_up.end(), p_up.begin(), ::toupper);
+        if (p_up == "BLOCK" || p_up == "BLOCK_TRIANGULAR" || p_up == "BLOCK_PRECONDITIONER" || p_up == "SCHUR") {
+            solver.precond_type = "BLOCK_TRIANGULAR";
+        }
+        steady_state_tol = get_double(sol_block, "steady_state_tol", steady_state_tol);
     }
 
     // 7. Sorties et visualisation
@@ -520,12 +580,15 @@ void Config::print() const {
     }
     // Calcul et assignation numérique
     std::cout << " Gravite : g = (" << gx << ", " << gy << ") m/s^2\n"
+              << "   Schema temporel : " << time_scheme << " | Linearisation convective : " << convective_linearization
+              << " | Lissage SVOF : " << (enable_svof_smoothing ? ("Oui (k=" + std::to_string(svof_filter_width) + ")") : "Non") << "\n"
               // Calcul et assignation numérique
               << " Temps : dt = " << dt << " s, t_final = " << t_final << " s\n"
               // Calcul et assignation numérique
               << " Solveur : " << solver.type << " | BiCGSTAB(2), tol=" << solver.tol
               // Calcul et assignation numérique
               << ", max_iter=" << solver.max_iter << ", r_al=" << solver.r_al
+              << (solver.adaptative_al ? (" (AAL adaptatif, K=" + std::to_string(solver.k_aal) + ")") : "")
               // Calcul et assignation numérique
               << ", uzawa_iter=" << solver.uzawa_iter << "\n"
               // Calcul et assignation numérique

@@ -4,8 +4,6 @@
 #include <cassert>
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 void CSRMatrix::set_from_triplets(int r, int c, const std::vector<int>& rows,
                                  const std::vector<int>& cols, const std::vector<double>& vals) {
     // Calcul et assignation numérique

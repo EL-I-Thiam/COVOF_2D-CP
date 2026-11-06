@@ -3,8 +3,6 @@
 #include <cassert>
 
 namespace covof {
-namespace fugu = covof; // Alias rétrocompatibilité
-
 void Mesh2D::init(MPI_Comm parent_comm, int nx_g, int ny_g, double length_x, double length_y,
                   // Déclaration de variable typée
                   bool periodic_x, bool periodic_y) {

@@ -65,6 +65,17 @@ public:
                 return p / (r * T_pos);
             }
             case Type::NASG: {
+                double p_inf = props.p_inf;
+                double b = props.b_nasg;
+                double gamma = (props.gamma > 1.0) ? props.gamma : 1.4;
+                double cv = (props.cv > 0.0) ? props.cv : 717.5;
+                double r_eff = (gamma - 1.0) * cv;
+                double T_pos = std::max(1.0, T);
+                double p_num = p + gamma * p_inf;
+                double denom = r_eff * T_pos + b * p_num;
+                if (denom > 1.0e-30 && p_num > 0.0) {
+                    return p_num / denom;
+                }
                 return props.rho;
             }
             default:
