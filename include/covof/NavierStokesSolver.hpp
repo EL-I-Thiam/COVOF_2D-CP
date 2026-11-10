@@ -74,12 +74,40 @@ public:
         return (time_scheme == "GEAR" || time_scheme == "BDF2");
     }
 
+    inline bool is_newton_convection() const {
+        return (enable_convection && convective_linearization == "NEWTON");
+    }
+
     inline bool is_augmented_lagrangian() const {
         return (solver_type == "AUGMENTED_LAGRANGIAN");
     }
 
     inline bool is_standard_projection() const {
         return (solver_type == "STANDARD_PROJECTION" || solver_type == "PROJECTION");
+    }
+
+    inline bool is_cell_in_obstacle(int i, int j) const {
+        double x = mesh.xc(i);
+        double y = mesh.yc(j);
+        return is_point_in_obstacle(x, y);
+    }
+
+    inline double get_cell_obstacle_perm(int i, int j) const {
+        double x = mesh.xc(i);
+        double y = mesh.yc(j);
+        for (const auto& obs : obstacles) {
+            bool in = false;
+            if (obs.type == "CYLINDER") {
+                double dx = x - obs.xc;
+                double dy = y - obs.yc;
+                in = (dx * dx + dy * dy <= obs.radius * obs.radius);
+            } else {
+                in = (x >= obs.x0 - 1e-9 && x <= obs.x1 + 1e-9 &&
+                      y >= obs.y0 - 1e-9 && y <= obs.y1 + 1e-9);
+            }
+            if (in) return obs.permeability;
+        }
+        return 0.0;
     }
 
     inline bool is_point_in_obstacle(double x, double y) const {
@@ -224,9 +252,9 @@ public:
     void compute_adaptative_r_al(FlowFields& fields, double dt) const;
 
     /**
-     * @brief Met à jour le champ de pression via le Lagrangien augmenté : p^{n+1} = p^n - r * div(u^{n+1})
+     * @brief Met à jour le champ de pression via le Lagrangien augmenté (C-AAL compressible ou incompressible)
      */
-    void update_pressure_al(FlowFields& fields) const;
+    void update_pressure_al(FlowFields& fields, double dt = 0.0) const;
 
     /**
      * @brief Résout un pas de temps par la méthode de Projection Standard (Chorin-Temam)

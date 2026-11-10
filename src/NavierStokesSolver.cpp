@@ -846,14 +846,25 @@ void NavierStokesSolver::compute_adaptative_r_al(FlowFields& fields, double dt) 
         fields.r_aal.assign(mesh.nx_ghost * mesh.ny_ghost, r_al);
     }
     if (!adaptative_al) {
-        std::fill(fields.r_aal.begin(), fields.r_aal.end(), r_al);
+        for (int j = 0; j < mesh.ny_ghost; ++j) {
+            for (int i = 0; i < mesh.nx_ghost; ++i) {
+                int c = mesh.cell_idx(i, j);
+                double r_base = r_al;
+                if (compressible && dt > 1.0e-30 && fields.chi_T.size() > (size_t)c && fields.chi_T[c] > 1.0e-15) {
+                    r_base = r_base / (1.0 + r_base * (fields.chi_T[c] / dt));
+                }
+                fields.r_aal[c] = r_base;
+            }
+        }
         return;
     }
 
-    // Échelles caractéristiques (Vincent et al., Computers & Fluids 33, 2004, Éq. 14, p. 1278)
+    // Échelles caractéristiques (Vincent et al., Computers & Fluids 33, 2004, Éq. 14 + extension C-AAL Brinkman/Compressible)
     const double L0 = (l0_ref > 0.0) ? l0_ref : std::min(mesh.lx, mesh.ly);
     const double t0 = (t0_ref > 0.0) ? t0_ref : dt;
     const double g_norm = std::sqrt(gx * gx + gy * gy);
+    const double alpha_time = (is_gear() && fields.has_nm1) ? 1.5 : 1.0;
+    const double dvol = mesh.dx * mesh.dy;
 
     // Vitesse maximale courante ||u^n||_inf et écart de pression
     double local_u_max = 0.0;
@@ -881,23 +892,36 @@ void NavierStokesSolver::compute_adaptative_r_al(FlowFields& fields, double dt) 
     }
     const double p0 = (p0_ref > 0.0) ? p0_ref : p_max;
 
-    // Évaluation locale cellule par cellule de l'Équation (14) :
-    // r(t, M) = K * max( rho*L0^2/t0, rho*u0*L0, rho*(L0^2/u0)*g, p0*L0/u0, mu, sigma/u0 )
+    // Évaluation locale cellule par cellule de C-AAL :
+    // r(t, M) = K_aal * max( alpha_time*rho*L0^2/t0, rho*u0*L0, rho*(L0^2/u0)*g, p0*L0/u0, mu, mu*dvol/K, sigma/u0 )
     for (int j = 1; j <= mesh.ny_local; ++j) {
         for (int i = 1; i <= mesh.nx_local; ++i) {
             int c = mesh.cell_idx(i, j);
             double rho_M = fields.rho[c];
             double mu_M  = fields.mu[c];
 
-            double t_unsteady = rho_M * (L0 * L0) / std::max(t0, 1.0e-30);
+            double t_unsteady = alpha_time * rho_M * (L0 * L0) / std::max(t0, 1.0e-30);
             double t_inert    = rho_M * u0 * L0;
             double t_grav     = rho_M * (L0 * L0 / u0) * g_norm;
             double t_press    = (p0 * L0) / u0;
             double t_visc     = mu_M;
             double t_cap      = sigma_surf / u0;
+            double t_brinkman = 0.0;
+            if (is_cell_in_obstacle(i, j)) {
+                double perm = get_cell_obstacle_perm(i, j);
+                if (perm > 1.0e-12) {
+                    t_brinkman = mu_M * (dvol / perm);
+                }
+            }
 
-            double r_loc = k_aal * std::max({t_unsteady, t_inert, t_grav, t_press, t_visc, t_cap});
-            fields.r_aal[c] = (r_loc > 1.0e-15) ? r_loc : r_al;
+            double r_loc = k_aal * std::max({t_unsteady, t_inert, t_grav, t_press, t_visc, t_brinkman, t_cap});
+            if (r_loc <= 1.0e-15) r_loc = r_al;
+
+            // Régularisation acoustique C-AAL dans les zones compressibles (chi_T > 0)
+            if (compressible && dt > 1.0e-30 && fields.chi_T.size() > (size_t)c && fields.chi_T[c] > 1.0e-15) {
+                r_loc = r_loc / (1.0 + r_loc * (fields.chi_T[c] / dt));
+            }
+            fields.r_aal[c] = r_loc;
         }
     }
 
@@ -905,21 +929,24 @@ void NavierStokesSolver::compute_adaptative_r_al(FlowFields& fields, double dt) 
     MpiComm::sync_cell_scalar(mesh, fields.r_aal);
 }
 
-void NavierStokesSolver::update_pressure_al(FlowFields& fields) const {
-    // Déclaration de variable typée
+void NavierStokesSolver::update_pressure_al(FlowFields& fields, double dt) const {
     double dx = mesh.dx;
-    // Déclaration de variable typée
     double dy = mesh.dy;
 
-    // Boucle spatiale sur les cellules locales selon l'axe vertical Y (ordonnées)
     for (int j = 1; j <= mesh.ny_local; ++j) {
-        // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
         for (int i = 1; i <= mesh.nx_local; ++i) {
             int c = mesh.cell_idx(i, j);
             double div = (fields.u[mesh.u_idx(i + 1, j)] - fields.u[mesh.u_idx(i, j)]) / dx +
                          (fields.v[mesh.v_idx(i, j + 1)] - fields.v[mesh.v_idx(i, j)]) / dy;
-            double r_loc = (adaptative_al && !fields.r_aal.empty()) ? fields.r_aal[c] : r_al;
-            fields.p[c] -= r_loc * div;
+            double r_eff = (adaptative_al && !fields.r_aal.empty()) ? fields.r_aal[c] : r_al;
+            if (compressible && dt > 1.0e-30 && fields.chi_T.size() > (size_t)c && fields.chi_T[c] > 1.0e-15) {
+                double chi_dt = fields.chi_T[c] / dt;
+                double p_n = (fields.p_old.size() > (size_t)c) ? fields.p_old[c] : fields.p[c];
+                double resid_comp = div + chi_dt * (fields.p[c] - p_n);
+                fields.p[c] -= r_eff * resid_comp;
+            } else {
+                fields.p[c] -= r_eff * div;
+            }
         }
     }
 
@@ -1255,6 +1282,10 @@ void NavierStokesSolver::assemble_preconditioner_blocks(const FlowFields& fields
                     d += (mu_u / perm) * dvol;
                 }
             }
+            if (is_newton_convection()) {
+                double du_dx = (fields.u[mesh.u_idx(i + 1, j)] - fields.u[mesh.u_idx(i - 1, j)]) / (2.0 * dx);
+                d += rho_u * std::max(0.0, du_dx) * dvol;
+            }
             diag_u[dof] = (d > 1.0e-15) ? d : 1.0;
         }
     }
@@ -1294,6 +1325,10 @@ void NavierStokesSolver::assemble_preconditioner_blocks(const FlowFields& fields
                     double mu_v = 0.5 * (fields.mu[mesh.cell_idx(i, j - 1)] + fields.mu[mesh.cell_idx(i, j)]);
                     d += (mu_v / perm) * dvol;
                 }
+            }
+            if (is_newton_convection()) {
+                double dv_dy = (fields.v[mesh.v_idx(i, j + 1)] - fields.v[mesh.v_idx(i, j - 1)]) / (2.0 * dy);
+                d += rho_v * std::max(0.0, dv_dy) * dvol;
             }
             diag_v[dof] = (d > 1.0e-15) ? d : 1.0;
         }

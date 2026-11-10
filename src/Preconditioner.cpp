@@ -254,6 +254,24 @@ void BlockTriangularPreconditioner::update(const FlowFields& fields, double dt) 
             u_aN[dof] = mu_avg * (dx / dy);
             u_aS[dof] = mu_avg * (dx / dy);
             u_aP[dof] = Du + u_aE[dof] + u_aW[dof] + u_aN[dof] + u_aS[dof];
+
+            if (ns_solver->is_augmented_lagrangian()) {
+                double r_E = (ns_solver->adaptative_al && !fields.r_aal.empty())
+                             ? fields.r_aal[ns_solver->mesh.cell_idx(i, j)] : ns_solver->r_al;
+                double r_W = (ns_solver->adaptative_al && !fields.r_aal.empty())
+                             ? fields.r_aal[ns_solver->mesh.cell_idx(i - 1, j)] : ns_solver->r_al;
+                u_aP[dof] += (r_E + r_W) * (dy / dx);
+            }
+            if (ns_solver->is_u_face_in_obstacle(i, j)) {
+                double perm = ns_solver->get_u_obstacle_perm(i, j);
+                if (perm > 1.0e-12) {
+                    u_aP[dof] += (mu_avg / perm) * dvol;
+                }
+            }
+            if (ns_solver->is_newton_convection()) {
+                double du_dx = (fields.u[ns_solver->mesh.u_idx(i + 1, j)] - fields.u[ns_solver->mesh.u_idx(i - 1, j)]) / (2.0 * dx);
+                u_aP[dof] += rho_u * std::max(0.0, du_dx) * dvol;
+            }
         }
     }
 
@@ -283,6 +301,24 @@ void BlockTriangularPreconditioner::update(const FlowFields& fields, double dt) 
             v_aE[dof] = mu_avg * (dy / dx);
             v_aW[dof] = mu_avg * (dy / dx);
             v_aP[dof] = Dv + v_aN[dof] + v_aS[dof] + v_aE[dof] + v_aW[dof];
+
+            if (ns_solver->is_augmented_lagrangian()) {
+                double r_N = (ns_solver->adaptative_al && !fields.r_aal.empty())
+                             ? fields.r_aal[ns_solver->mesh.cell_idx(i, j)] : ns_solver->r_al;
+                double r_S = (ns_solver->adaptative_al && !fields.r_aal.empty())
+                             ? fields.r_aal[ns_solver->mesh.cell_idx(i, j - 1)] : ns_solver->r_al;
+                v_aP[dof] += (r_N + r_S) * (dx / dy);
+            }
+            if (ns_solver->is_v_face_in_obstacle(i, j)) {
+                double perm = ns_solver->get_v_obstacle_perm(i, j);
+                if (perm > 1.0e-12) {
+                    v_aP[dof] += (mu_avg / perm) * dvol;
+                }
+            }
+            if (ns_solver->is_newton_convection()) {
+                double dv_dy = (fields.v[ns_solver->mesh.v_idx(i, j + 1)] - fields.v[ns_solver->mesh.v_idx(i, j - 1)]) / (2.0 * dy);
+                v_aP[dof] += rho_v * std::max(0.0, dv_dy) * dvol;
+            }
         }
     }
 
@@ -613,6 +649,7 @@ std::unique_ptr<PreconditionerBase> PreconditionerFactory::create(const std::str
         return std::make_unique<ILU0Preconditioner>();
     // Calcul et assignation numérique
     } else if (upper_type == "BLOCK_TRIANGULAR" || upper_type == "SCHUR" ||
+               upper_type == "BT_SBP" || upper_type == "BT-SBP" ||
                upper_type == "BLOCK" || upper_type == "BLOCK_PRECONDITIONER" || upper_type == "BLOCK_PRECOND") {
         // Retour de fonction
         return std::make_unique<BlockTriangularPreconditioner>();

@@ -466,18 +466,23 @@ void Simulation::run() {
                 // 6. Déballage de la vitesse résolue u^{*,m}
                 ns_solver.unpack_vector(state_vector, fields);
 
-                // 7. Mise à jour d'Uzawa : p^{*,m} = p^{*,m-1} - r(t, M) * div(u^{*,m})
+                // 7. Mise à jour d'Uzawa (C-AAL compressible ou incompressible)
                 if (ns_solver.is_augmented_lagrangian()) {
-                    ns_solver.update_pressure_al(fields);
+                    ns_solver.update_pressure_al(fields, dt);
 
-                    // Critère d'arrêt d'Uzawa sur ||div(u^{*,m})||_inf <= uzawa_tol (Éq. 10)
+                    // Critère d'arrêt d'Uzawa sur le résidu de continuité généralisé <= uzawa_tol (Éq. 10)
                     if (uzawa_max > 1 && ns_solver.uzawa_tol > 0.0) {
                         double loc_div_m = 0.0;
                         for (int j = 1; j <= mesh.ny_local; ++j) {
                             for (int i = 1; i <= mesh.nx_local; ++i) {
-                                double d_m = std::abs(
-                                    (fields.u[mesh.u_idx(i + 1, j)] - fields.u[mesh.u_idx(i, j)]) / mesh.dx +
-                                    (fields.v[mesh.v_idx(i, j + 1)] - fields.v[mesh.v_idx(i, j)]) / mesh.dy);
+                                int c = mesh.cell_idx(i, j);
+                                double div_u = (fields.u[mesh.u_idx(i + 1, j)] - fields.u[mesh.u_idx(i, j)]) / mesh.dx +
+                                               (fields.v[mesh.v_idx(i, j + 1)] - fields.v[mesh.v_idx(i, j)]) / mesh.dy;
+                                if (config.compressible && dt > 1.0e-30 && fields.chi_T.size() > (size_t)c) {
+                                    double p_n = (fields.p_old.size() > (size_t)c) ? fields.p_old[c] : fields.p[c];
+                                    div_u += (fields.chi_T[c] / dt) * (fields.p[c] - p_n);
+                                }
+                                double d_m = std::abs(div_u);
                                 if (d_m > loc_div_m) loc_div_m = d_m;
                             }
                         }
@@ -486,6 +491,11 @@ void Simulation::run() {
                     }
                 }
             }
+        }
+
+        // 7.2 Mise à jour barotrope des masses volumiques rho_m(p^{n+1}) en régime diphasique compressible
+        if (config.compressible && config.enable_two_phase) {
+            tracker.update_physical_properties(mesh, fields);
         }
 
         // 7.5 Résolution de l'énergie (totale si compressible non-isotherme, thermique si Boussinesq)
