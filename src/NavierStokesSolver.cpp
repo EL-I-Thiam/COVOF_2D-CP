@@ -213,9 +213,9 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
     auto c_idx = [&](int i, int j) { return j * (mesh.nx_local + 2) + i; };
 
     // Boucle spatiale sur les cellules locales selon l'axe vertical Y (ordonnées)
-    for (int j = 0; j <= mesh.ny_local + 1; ++j) {
+    for (int j = 0; j <= mesh.ny_local; ++j) {
         // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
-        for (int i = 0; i <= mesh.nx_local + 1; ++i) {
+        for (int i = 0; i <= mesh.nx_local; ++i) {
             // Déclaration de variable typée
             double d = (tf.u[mesh.u_idx(i + 1, j)] - tf.u[mesh.u_idx(i, j)]) / dx +
                        (tf.v[mesh.v_idx(i, j + 1)] - tf.v[mesh.v_idx(i, j)]) / dy;
@@ -227,12 +227,20 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
     // =========================================================================
     // 1. Équation de Quantité de Mouvement en u (Faces verticales)
     // =========================================================================
+    const double alpha_time = (is_gear() && fields_old.has_nm1) ? 1.5 : 1.0;
+    const bool is_mono = is_monolithic();
+    const bool is_al = is_augmented_lagrangian();
+    const bool is_ab2 = (convective_linearization == "ADAMS_BASHFORTH" || convective_linearization == "AB2");
+    const bool is_newton = (convective_linearization == "NEWTON");
+    const bool has_obs = !obstacles.empty();
+    const auto& u_ref = (is_ab2 && !fields_old.u_old.empty()) ? fields_old.u_old : fields_old.u;
+    const auto& v_ref = (is_ab2 && !fields_old.v_old.empty()) ? fields_old.v_old : fields_old.v;
+
     for (int j = 1; j <= mesh.ny_local; ++j) {
         // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
         for (int i = 1; i <= u_nx; ++i) {
             // Déclaration de variable typée
             int dof = (j - 1) * u_nx + (i - 1);
-            double alpha_time = (is_gear() && fields_old.has_nm1) ? 1.5 : 1.0;
 
             // Condition aux limites physique sur les parois gauche / droite ou obstacle solide
             if (i == 1 && mesh.is_boundary_left) {
@@ -267,7 +275,7 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
                 continue;
             }
             // Évaluation de la condition de contrôle
-            if (is_u_face_in_obstacle(i, j)) {
+            if (has_obs && is_u_face_in_obstacle(i, j)) {
                 double perm = get_u_obstacle_perm(i, j);
                 if (perm <= 1.0e-12) {
                     // Obstacle solide rigide (Dirichlet nul)
@@ -286,11 +294,6 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
 
             // Terme convectif semi-implicite F_uu (forme advective non-conservative a densite harmonique)
             if (enable_convection) {
-                const auto& u_ref = ((convective_linearization == "ADAMS_BASHFORTH" || convective_linearization == "AB2") && !fields_old.u_old.empty())
-                                    ? fields_old.u_old : fields_old.u;
-                const auto& v_ref = ((convective_linearization == "ADAMS_BASHFORTH" || convective_linearization == "AB2") && !fields_old.v_old.empty())
-                                    ? fields_old.v_old : fields_old.v;
-
                 double u_n = u_ref[mesh.u_idx(i, j)];
                 double u_n_E = u_ref[mesh.u_idx(i + 1, j)];
                 double u_n_W = u_ref[mesh.u_idx(i - 1, j)];
@@ -298,7 +301,7 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
                 double v_n_N = 0.5 * (v_ref[mesh.v_idx(i - 1, j + 1)] + v_ref[mesh.v_idx(i, j + 1)]);
                 double v_n_S = 0.5 * (v_ref[mesh.v_idx(i - 1, j)] + v_ref[mesh.v_idx(i, j)]);
 
-                if ((convective_linearization == "ADAMS_BASHFORTH" || convective_linearization == "AB2") && fields_old.has_nm1) {
+                if (is_ab2 && fields_old.has_nm1) {
                     u_n   = 2.0 * u_n   - fields_old.u_nm1[mesh.u_idx(i, j)];
                     u_n_E = 2.0 * u_n_E - fields_old.u_nm1[mesh.u_idx(i + 1, j)];
                     u_n_W = 2.0 * u_n_W - fields_old.u_nm1[mesh.u_idx(i - 1, j)];
@@ -319,7 +322,7 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
                                       F_N * (tf.u[mesh.u_idx(i, j + 1)] + tf.u[mesh.u_idx(i, j)]) -
                                       F_S * (tf.u[mesh.u_idx(i, j - 1)] + tf.u[mesh.u_idx(i, j)]));
 
-                if (convective_linearization == "NEWTON") {
+                if (is_newton) {
                     double du_dx = (fields_old.u[mesh.u_idx(i + 1, j)] - fields_old.u[mesh.u_idx(i - 1, j)]) / (2.0 * dx);
                     double du_dy = (fields_old.u[mesh.u_idx(i, j + 1)] - fields_old.u[mesh.u_idx(i, j - 1)]) / (2.0 * dy);
                     double tf_v_face = 0.25 * (tf.v[mesh.v_idx(i - 1, j)] + tf.v[mesh.v_idx(i, j)] +
@@ -355,14 +358,14 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
             val -= (shear_N - shear_S);
 
             // Terme de pénalité de Lagrangien augmenté (adaptatif Éq. 15 : -d(r*div)/dx * dvol)
-            if (is_augmented_lagrangian()) {
+            if (is_al) {
                 double r_E = (adaptative_al && !fields_old.r_aal.empty()) ? fields_old.r_aal[mesh.cell_idx(i, j)]     : r_al;
                 double r_W = (adaptative_al && !fields_old.r_aal.empty()) ? fields_old.r_aal[mesh.cell_idx(i - 1, j)] : r_al;
                 val -= (r_E * div_cell[c_idx(i, j)] - r_W * div_cell[c_idx(i - 1, j)]) * dy;
             }
 
             // Gradient de pression discret B_u^T (uniquement si monolithique)
-            if (is_monolithic()) {
+            if (is_mono) {
                 // Déclaration de variable typée
                 double grad_p = (tf.p[mesh.cell_idx(i, j)] - tf.p[mesh.cell_idx(i - 1, j)]) * dy;
                 // Calcul et assignation numérique
@@ -370,7 +373,7 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
             }
 
             // Traînée poreuse de Darcy-Brinkman pour obstacle perméable
-            if (is_u_face_in_obstacle(i, j)) {
+            if (has_obs && is_u_face_in_obstacle(i, j)) {
                 double perm = get_u_obstacle_perm(i, j);
                 if (perm > 1.0e-12) {
                     double mu_u = 0.5 * (fields_old.mu[mesh.cell_idx(i - 1, j)] + fields_old.mu[mesh.cell_idx(i, j)]);
@@ -393,14 +396,13 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
         for (int i = 1; i <= mesh.nx_local; ++i) {
             // Déclaration de variable typée
             int dof = v_offset + (j - 1) * mesh.nx_local + (i - 1);
-            double alpha_time = (is_gear() && fields_old.has_nm1) ? 1.5 : 1.0;
 
             // Condition aux limites physique Dirichlet ou Free-Slip sur les parois basse / haute ou obstacle solide
             bool is_wall_bot = (j == 1 && mesh.is_boundary_bottom && (bc.bottom.type == BCType::DIRICHLET || bc.bottom.type == BCType::FREE_SLIP));
             // Déclaration de variable typée
             bool is_wall_top = (j == v_ny && mesh.is_boundary_top && (bc.top.type == BCType::DIRICHLET || bc.top.type == BCType::FREE_SLIP));
             // Déclaration de variable typée
-            bool in_obs = is_v_face_in_obstacle(i, j);
+            bool in_obs = has_obs && is_v_face_in_obstacle(i, j);
             bool is_solid_obs = in_obs && (get_v_obstacle_perm(i, j) <= 1.0e-12);
             // Évaluation de la condition de contrôle
             if (is_wall_bot || is_wall_top || is_solid_obs) {
@@ -421,11 +423,6 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
 
             // Terme convectif semi-implicite F_vv (forme advective non-conservative a densite harmonique)
             if (enable_convection) {
-                const auto& u_ref = ((convective_linearization == "ADAMS_BASHFORTH" || convective_linearization == "AB2") && !fields_old.u_old.empty())
-                                    ? fields_old.u_old : fields_old.u;
-                const auto& v_ref = ((convective_linearization == "ADAMS_BASHFORTH" || convective_linearization == "AB2") && !fields_old.v_old.empty())
-                                    ? fields_old.v_old : fields_old.v;
-
                 double v_n = v_ref[mesh.v_idx(i, j)];
                 double v_n_N = v_ref[mesh.v_idx(i, j + 1)];
                 double v_n_S = v_ref[mesh.v_idx(i, j - 1)];
@@ -433,7 +430,7 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
                 double u_n_E = 0.5 * (u_ref[mesh.u_idx(i + 1, j - 1)] + u_ref[mesh.u_idx(i + 1, j)]);
                 double u_n_W = 0.5 * (u_ref[mesh.u_idx(i, j - 1)] + u_ref[mesh.u_idx(i, j)]);
 
-                if ((convective_linearization == "ADAMS_BASHFORTH" || convective_linearization == "AB2") && fields_old.has_nm1) {
+                if (is_ab2 && fields_old.has_nm1) {
                     v_n   = 2.0 * v_n   - fields_old.v_nm1[mesh.v_idx(i, j)];
                     v_n_N = 2.0 * v_n_N - fields_old.v_nm1[mesh.v_idx(i, j + 1)];
                     v_n_S = 2.0 * v_n_S - fields_old.v_nm1[mesh.v_idx(i, j - 1)];
@@ -454,7 +451,7 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
                                       F_N * (tf.v[mesh.v_idx(i, j + 1)] + tf.v[mesh.v_idx(i, j)]) -
                                       F_S * (tf.v[mesh.v_idx(i, j - 1)] + tf.v[mesh.v_idx(i, j)]));
 
-                if (convective_linearization == "NEWTON") {
+                if (is_newton) {
                     double dv_dx = (fields_old.v[mesh.v_idx(i + 1, j)] - fields_old.v[mesh.v_idx(i - 1, j)]) / (2.0 * dx);
                     double dv_dy = (fields_old.v[mesh.v_idx(i, j + 1)] - fields_old.v[mesh.v_idx(i, j - 1)]) / (2.0 * dy);
                     double tf_u_face = 0.25 * (tf.u[mesh.u_idx(i, j - 1)] + tf.u[mesh.u_idx(i + 1, j - 1)] +
@@ -490,14 +487,14 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
             val -= (shear_E - shear_W);
 
             // Terme de pénalité de Lagrangien augmenté (adaptatif Éq. 15 : -d(r*div)/dy * dvol)
-            if (is_augmented_lagrangian()) {
+            if (is_al) {
                 double r_N = (adaptative_al && !fields_old.r_aal.empty()) ? fields_old.r_aal[mesh.cell_idx(i, j)]     : r_al;
                 double r_S = (adaptative_al && !fields_old.r_aal.empty()) ? fields_old.r_aal[mesh.cell_idx(i, j - 1)] : r_al;
                 val -= (r_N * div_cell[c_idx(i, j)] - r_S * div_cell[c_idx(i, j - 1)]) * dx;
             }
 
             // Gradient de pression discret B_v^T (uniquement si monolithique)
-            if (is_monolithic()) {
+            if (is_mono) {
                 // Déclaration de variable typée
                 double grad_p = (tf.p[mesh.cell_idx(i, j)] - tf.p[mesh.cell_idx(i, j - 1)]) * dx;
                 // Calcul et assignation numérique
@@ -850,7 +847,7 @@ void NavierStokesSolver::compute_adaptative_r_al(FlowFields& fields, double dt) 
             for (int i = 0; i < mesh.nx_ghost; ++i) {
                 int c = mesh.cell_idx(i, j);
                 double r_base = r_al;
-                if (compressible && dt > 1.0e-30 && fields.chi_T.size() > (size_t)c && fields.chi_T[c] > 1.0e-15) {
+                if ((is_caal() || (compressible && !is_aal_incompressible())) && dt > 1.0e-30 && fields.chi_T.size() > (size_t)c && fields.chi_T[c] > 1.0e-15) {
                     r_base = r_base / (1.0 + r_base * (fields.chi_T[c] / dt));
                 }
                 fields.r_aal[c] = r_base;
@@ -918,7 +915,7 @@ void NavierStokesSolver::compute_adaptative_r_al(FlowFields& fields, double dt) 
             if (r_loc <= 1.0e-15) r_loc = r_al;
 
             // Régularisation acoustique C-AAL dans les zones compressibles (chi_T > 0)
-            if (compressible && dt > 1.0e-30 && fields.chi_T.size() > (size_t)c && fields.chi_T[c] > 1.0e-15) {
+            if ((is_caal() || (compressible && !is_aal_incompressible())) && dt > 1.0e-30 && fields.chi_T.size() > (size_t)c && fields.chi_T[c] > 1.0e-15) {
                 r_loc = r_loc / (1.0 + r_loc * (fields.chi_T[c] / dt));
             }
             fields.r_aal[c] = r_loc;
@@ -939,7 +936,7 @@ void NavierStokesSolver::update_pressure_al(FlowFields& fields, double dt) const
             double div = (fields.u[mesh.u_idx(i + 1, j)] - fields.u[mesh.u_idx(i, j)]) / dx +
                          (fields.v[mesh.v_idx(i, j + 1)] - fields.v[mesh.v_idx(i, j)]) / dy;
             double r_eff = (adaptative_al && !fields.r_aal.empty()) ? fields.r_aal[c] : r_al;
-            if (compressible && dt > 1.0e-30 && fields.chi_T.size() > (size_t)c && fields.chi_T[c] > 1.0e-15) {
+            if ((is_caal() || (compressible && !is_aal_incompressible())) && dt > 1.0e-30 && fields.chi_T.size() > (size_t)c && fields.chi_T[c] > 1.0e-15) {
                 double chi_dt = fields.chi_T[c] / dt;
                 double p_n = (fields.p_old.size() > (size_t)c) ? fields.p_old[c] : fields.p[c];
                 double resid_comp = div + chi_dt * (fields.p[c] - p_n);

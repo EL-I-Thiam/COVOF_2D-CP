@@ -79,7 +79,19 @@ public:
     }
 
     inline bool is_augmented_lagrangian() const {
-        return (solver_type == "AUGMENTED_LAGRANGIAN");
+        return (solver_type == "AUGMENTED_LAGRANGIAN" || solver_type == "AAL" ||
+                solver_type == "C-AAL" || solver_type == "CAAL" ||
+                solver_type == "ADAPTATIVE_AUGMENTED_LAGRANGIAN" ||
+                solver_type == "ADAPTIVE_AUGMENTED_LAGRANGIAN");
+    }
+
+    inline bool is_caal() const {
+        return (solver_type == "C-AAL" || solver_type == "CAAL" || solver_type == "COMPRESSIBLE_AAL");
+    }
+
+    inline bool is_aal_incompressible() const {
+        return (solver_type == "AAL" || solver_type == "ADAPTATIVE_AUGMENTED_LAGRANGIAN" ||
+                solver_type == "ADAPTIVE_AUGMENTED_LAGRANGIAN");
     }
 
     inline bool is_standard_projection() const {

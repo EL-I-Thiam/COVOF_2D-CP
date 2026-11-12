@@ -405,10 +405,17 @@ bool Config::load_from_json(const std::string& filepath) {
             solver.type = "AUGMENTED_LAGRANGIAN";
             solver.linear_solver = "DIRECT";
         }
-        if (solver.type == "ADAPTATIVE_AUGMENTED_LAGRANGIAN" ||
-            solver.type == "ADAPTIVE_AUGMENTED_LAGRANGIAN" ||
-            solver.type == "AAL") {
-            solver.type = "AUGMENTED_LAGRANGIAN";
+        if (solver.type == "FULLY_COUPLED" || solver.type == "FC") {
+            solver.type = "MONOLITHIC";
+        }
+        if (solver.type == "C-AAL" || solver.type == "CAAL" || solver.type == "COMPRESSIBLE_AAL") {
+            solver.type = "C-AAL";
+            solver.adaptative_al = true;
+            compressible = true;
+        } else if (solver.type == "ADAPTATIVE_AUGMENTED_LAGRANGIAN" ||
+                   solver.type == "ADAPTIVE_AUGMENTED_LAGRANGIAN" ||
+                   solver.type == "AAL") {
+            solver.type = "AAL";
             solver.adaptative_al = true;
         }
         solver.tol = get_double(sol_block, "tol", solver.tol);
@@ -418,6 +425,7 @@ bool Config::load_from_json(const std::string& filepath) {
         solver.r_al = get_double(sol_block, "r_al", solver.r_al);
         solver.adaptative_al = get_bool(sol_block, "adaptative_al", solver.adaptative_al);
         solver.adaptative_al = get_bool(sol_block, "adaptative_r", solver.adaptative_al);
+        solver.adaptative_al = get_bool(sol_block, "adaptative_r_al", solver.adaptative_al);
         solver.k_aal = get_double(sol_block, "k_aal", solver.k_aal);
         solver.k_aal = get_double(sol_block, "r_factor", solver.k_aal);
         solver.uzawa_tol = get_double(sol_block, "uzawa_tol", solver.uzawa_tol);

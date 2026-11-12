@@ -253,15 +253,16 @@ void BlockTriangularPreconditioner::update(const FlowFields& fields, double dt) 
             u_aW[dof] = 2.0 * mu_w * (dy / dx);
             u_aN[dof] = mu_avg * (dx / dy);
             u_aS[dof] = mu_avg * (dx / dy);
-            u_aP[dof] = Du + u_aE[dof] + u_aW[dof] + u_aN[dof] + u_aS[dof];
 
             if (ns_solver->is_augmented_lagrangian()) {
                 double r_E = (ns_solver->adaptative_al && !fields.r_aal.empty())
                              ? fields.r_aal[ns_solver->mesh.cell_idx(i, j)] : ns_solver->r_al;
                 double r_W = (ns_solver->adaptative_al && !fields.r_aal.empty())
                              ? fields.r_aal[ns_solver->mesh.cell_idx(i - 1, j)] : ns_solver->r_al;
-                u_aP[dof] += (r_E + r_W) * (dy / dx);
+                u_aE[dof] += r_E * (dy / dx);
+                u_aW[dof] += r_W * (dy / dx);
             }
+            u_aP[dof] = Du + u_aE[dof] + u_aW[dof] + u_aN[dof] + u_aS[dof];
             if (ns_solver->is_u_face_in_obstacle(i, j)) {
                 double perm = ns_solver->get_u_obstacle_perm(i, j);
                 if (perm > 1.0e-12) {
@@ -300,15 +301,16 @@ void BlockTriangularPreconditioner::update(const FlowFields& fields, double dt) 
             v_aS[dof] = 2.0 * mu_s * (dx / dy);
             v_aE[dof] = mu_avg * (dy / dx);
             v_aW[dof] = mu_avg * (dy / dx);
-            v_aP[dof] = Dv + v_aN[dof] + v_aS[dof] + v_aE[dof] + v_aW[dof];
 
             if (ns_solver->is_augmented_lagrangian()) {
                 double r_N = (ns_solver->adaptative_al && !fields.r_aal.empty())
                              ? fields.r_aal[ns_solver->mesh.cell_idx(i, j)] : ns_solver->r_al;
                 double r_S = (ns_solver->adaptative_al && !fields.r_aal.empty())
                              ? fields.r_aal[ns_solver->mesh.cell_idx(i, j - 1)] : ns_solver->r_al;
-                v_aP[dof] += (r_N + r_S) * (dx / dy);
+                v_aN[dof] += r_N * (dx / dy);
+                v_aS[dof] += r_S * (dx / dy);
             }
+            v_aP[dof] = Dv + v_aN[dof] + v_aS[dof] + v_aE[dof] + v_aW[dof];
             if (ns_solver->is_v_face_in_obstacle(i, j)) {
                 double perm = ns_solver->get_v_obstacle_perm(i, j);
                 if (perm > 1.0e-12) {
@@ -493,13 +495,6 @@ void BlockTriangularPreconditioner::apply(const std::vector<double>& z, std::vec
             for (int j = 1; j <= ny; ++j) {
                 for (int i = 1; i <= u_nx; ++i) {
                     int dof = (j - 1) * u_nx + (i - 1);
-                    bool is_wall = (i == 1 && ns_solver->mesh.is_boundary_left) ||
-                                   (i == u_nx && ns_solver->mesh.is_boundary_right) ||
-                                   (ns_solver->is_u_face_in_obstacle(i, j) && ns_solver->get_u_obstacle_perm(i, j) <= 1.0e-12);
-                    if (is_wall) {
-                        r_u[dof] = rhs_u[dof] / u_aP[dof];
-                        continue;
-                    }
                     double val = rhs_u[dof];
                     if (i > 1) val += u_aW[dof] * r_u[dof - 1];
                     else if (ns_solver->bc.left.type == BCType::PERIODIC) val += u_aW[dof] * r_u[(j - 1) * u_nx + (u_nx - 1)];
@@ -514,13 +509,6 @@ void BlockTriangularPreconditioner::apply(const std::vector<double>& z, std::vec
             for (int j = ny; j >= 1; --j) {
                 for (int i = u_nx; i >= 1; --i) {
                     int dof = (j - 1) * u_nx + (i - 1);
-                    bool is_wall = (i == 1 && ns_solver->mesh.is_boundary_left) ||
-                                   (i == u_nx && ns_solver->mesh.is_boundary_right) ||
-                                   (ns_solver->is_u_face_in_obstacle(i, j) && ns_solver->get_u_obstacle_perm(i, j) <= 1.0e-12);
-                    if (is_wall) {
-                        r_u[dof] = rhs_u[dof] / u_aP[dof];
-                        continue;
-                    }
                     double val = rhs_u[dof];
                     if (i > 1) val += u_aW[dof] * r_u[dof - 1];
                     else if (ns_solver->bc.left.type == BCType::PERIODIC) val += u_aW[dof] * r_u[(j - 1) * u_nx + (u_nx - 1)];
@@ -540,15 +528,6 @@ void BlockTriangularPreconditioner::apply(const std::vector<double>& z, std::vec
             for (int j = 1; j <= v_ny; ++j) {
                 for (int i = 1; i <= nx; ++i) {
                     int dof = (j - 1) * nx + (i - 1);
-                    bool is_wall = (j == 1 && ns_solver->mesh.is_boundary_bottom &&
-                                    (ns_solver->bc.bottom.type == BCType::DIRICHLET || ns_solver->bc.bottom.type == BCType::FREE_SLIP)) ||
-                                   (j == v_ny && ns_solver->mesh.is_boundary_top &&
-                                    (ns_solver->bc.top.type == BCType::DIRICHLET || ns_solver->bc.top.type == BCType::FREE_SLIP)) ||
-                                   (ns_solver->is_v_face_in_obstacle(i, j) && ns_solver->get_v_obstacle_perm(i, j) <= 1.0e-12);
-                    if (is_wall) {
-                        r_v[dof] = rhs_v[dof] / v_aP[dof];
-                        continue;
-                    }
                     double val = rhs_v[dof];
                     if (i > 1) val += v_aW[dof] * r_v[dof - 1];
                     else if (ns_solver->bc.left.type == BCType::PERIODIC) val += v_aW[dof] * r_v[(j - 1) * nx + (nx - 1)];
@@ -565,15 +544,6 @@ void BlockTriangularPreconditioner::apply(const std::vector<double>& z, std::vec
             for (int j = v_ny; j >= 1; --j) {
                 for (int i = nx; i >= 1; --i) {
                     int dof = (j - 1) * nx + (i - 1);
-                    bool is_wall = (j == 1 && ns_solver->mesh.is_boundary_bottom &&
-                                    (ns_solver->bc.bottom.type == BCType::DIRICHLET || ns_solver->bc.bottom.type == BCType::FREE_SLIP)) ||
-                                   (j == v_ny && ns_solver->mesh.is_boundary_top &&
-                                    (ns_solver->bc.top.type == BCType::DIRICHLET || ns_solver->bc.top.type == BCType::FREE_SLIP)) ||
-                                   (ns_solver->is_v_face_in_obstacle(i, j) && ns_solver->get_v_obstacle_perm(i, j) <= 1.0e-12);
-                    if (is_wall) {
-                        r_v[dof] = rhs_v[dof] / v_aP[dof];
-                        continue;
-                    }
                     double val = rhs_v[dof];
                     if (i > 1) val += v_aW[dof] * r_v[dof - 1];
                     else if (ns_solver->bc.left.type == BCType::PERIODIC) val += v_aW[dof] * r_v[(j - 1) * nx + (nx - 1)];
@@ -594,7 +564,7 @@ void BlockTriangularPreconditioner::apply(const std::vector<double>& z, std::vec
         for (int i = 0; i < np; ++i) r[p_offset + i] = r_p[i];
 
     } else {
-        // En mode Lagrangien augmenté : préconditionnement diagonal de Jacobi
+        // En mode Lagrangien augmenté (C-AAL + BT-SBP) : préconditionnement diagonal enrichi (visqueux + AL + Brinkman + Newton)
         for (int i = 0; i < nu; ++i) {
             double du = (ns_solver->diag_u.size() > (size_t)i && std::abs(ns_solver->diag_u[i]) > 1.0e-15)
                         ? ns_solver->diag_u[i] : 1.0;

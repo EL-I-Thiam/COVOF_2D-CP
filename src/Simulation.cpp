@@ -478,7 +478,7 @@ void Simulation::run() {
                                 int c = mesh.cell_idx(i, j);
                                 double div_u = (fields.u[mesh.u_idx(i + 1, j)] - fields.u[mesh.u_idx(i, j)]) / mesh.dx +
                                                (fields.v[mesh.v_idx(i, j + 1)] - fields.v[mesh.v_idx(i, j)]) / mesh.dy;
-                                if (config.compressible && dt > 1.0e-30 && fields.chi_T.size() > (size_t)c) {
+                                if ((ns_solver.is_caal() || (config.compressible && !ns_solver.is_aal_incompressible())) && dt > 1.0e-30 && fields.chi_T.size() > (size_t)c) {
                                     double p_n = (fields.p_old.size() > (size_t)c) ? fields.p_old[c] : fields.p[c];
                                     div_u += (fields.chi_T[c] / dt) * (fields.p[c] - p_n);
                                 }
