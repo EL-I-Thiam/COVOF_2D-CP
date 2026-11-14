@@ -1,9 +1,9 @@
 # Build directories and executables
-build/
-bin/
+/build/
+/bin/
 CMakeCache.txt
 CMakeFiles/
-Makefile
+/Makefile
 cmake_install.cmake
 
 # C++ object and library files
@@ -21,3 +21,6 @@ output*/
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Allow compiled PDFs in Guides_Tutos/build/
+!Guides_Tutos/build/*.pdf
