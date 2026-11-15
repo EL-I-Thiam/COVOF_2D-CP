@@ -210,6 +210,14 @@ struct VofConfig {
     std::string tvd_limiter = "NONE";                 ///< "SUPERBEE", "VAN_LEER", "MUSCL", "HRIC", "NONE"
     // Déclaration de variable typée
     double cfl_vof = 0.5;                             ///< Nombre de CFL maximum pour le transport VOF
+    // Options pour la méthode hybride VOF-PLIC (Weymouth & Yue) + CVI + Marqueurs Lagrangiens Non Connectés
+    bool use_markers = false;                         ///< Activer les marqueurs d'interface lagrangiens non connectés
+    int markers_per_cell = 4;                         ///< Nombre initial de marqueurs par segment PLIC coupé
+    std::string marker_advection_scheme = "CVI_RK2";  ///< Schéma d'advection des marqueurs ("CVI_RK2", "BILINEAR_RK2")
+    bool marker_curvature = true;                     ///< Calculer la courbure par régression parabolique sur les marqueurs
+    bool marker_normals_plic = true;                  ///< Coupler les normales des marqueurs dans la reconstruction PLIC
+    int marker_max_per_cell = 8;                      ///< Seuil d'élagage par sous-octants dans une cellule
+    bool write_markers_vtk = false;                   ///< Exporter le nuage de marqueurs au format VTK POLYDATA
 };
 
 } // namespace covof

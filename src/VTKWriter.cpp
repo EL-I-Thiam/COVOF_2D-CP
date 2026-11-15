@@ -148,6 +148,18 @@ void VTKWriter::write_step(const Mesh2D& mesh, const FlowFields& fields, int ste
         }
         vtr << "        </DataArray>\n";
 
+        // Curvature kappa
+        if (!fields.kappa.empty()) {
+            vtr << "        <DataArray type=\"Float64\" Name=\"Curvature\" format=\"ascii\">\n";
+            for (int j = 1; j <= mesh.ny_local; ++j) {
+                for (int i = 1; i <= mesh.nx_local; ++i) {
+                    vtr << fields.kappa[mesh.cell_idx(i, j)] << " ";
+                }
+                vtr << "\n";
+            }
+            vtr << "        </DataArray>\n";
+        }
+
         // Velocity vector au centre des cellules
         vtr << "        <DataArray type=\"Float64\" Name=\"Velocity\" NumberOfComponents=\"3\" format=\"ascii\">\n";
         // Boucle spatiale sur les cellules locales selon l'axe vertical Y (ordonnées)
@@ -230,6 +242,8 @@ void VTKWriter::write_step(const Mesh2D& mesh, const FlowFields& fields, int ste
                  << "      <PDataArray type=\"Float64\" Name=\"Viscosity\"/>\n"
                  // Calcul et assignation numérique
                  << "      <PDataArray type=\"Float64\" Name=\"Divergence\"/>\n"
+                 << "      <PDataArray type=\"Float64\" Name=\"Temperature\"/>\n"
+                 << "      <PDataArray type=\"Float64\" Name=\"Curvature\"/>\n"
                  // Calcul et assignation numérique
                  << "      <PDataArray type=\"Float64\" Name=\"Velocity\" NumberOfComponents=\"3\"/>\n"
                  << "    </PCellData>\n"

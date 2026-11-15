@@ -4,6 +4,7 @@
 #include "Field.hpp"
 #include "Config.hpp"
 #include "InterfaceReconstruction.hpp"
+#include "InterfaceMarkers.hpp"
 
 namespace covof {
 /**
@@ -32,6 +33,8 @@ public:
     VofConfig vof_cfg;
     // Segments d'interface géométriques reconstruits
     std::vector<InterfaceSegment> interface_segments;
+    // Nuage de marqueurs lagrangiens non connectés (Méthode hybride FC-WY-CVI-Marqueurs)
+    InterfaceMarkers markers;
     // Compteur de pas pour Strang splitting alterné
     int step_count = 0;
 
@@ -119,6 +122,12 @@ public:
      * @brief Calcule la normale, la courbure kappa et la force capillaire CSF équilibrée
      */
     void compute_curvature_and_CSF(const Mesh2D& mesh, FlowFields& fields);
+
+    /**
+     * @brief Injecte les normales issues des marqueurs dans les segments PLIC reconstruits
+     */
+    void apply_marker_normals_to_segments(const Mesh2D& mesh, const FlowFields& fields,
+                                          const std::vector<double>& C_in);
 };
 
 } // namespace covof

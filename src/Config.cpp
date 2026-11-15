@@ -467,17 +467,47 @@ bool Config::load_from_json(const std::string& filepath) {
     }
 
     // 8. Capture d'interface et transport VOF
+    vof.use_markers             = get_bool(json, "use_markers", vof.use_markers);
+    vof.markers_per_cell        = get_int(json, "markers_per_cell", vof.markers_per_cell);
+    vof.marker_advection_scheme = get_string(json, "marker_advection_scheme", vof.marker_advection_scheme);
+    vof.marker_curvature        = get_bool(json, "marker_curvature", vof.marker_curvature);
+    vof.marker_normals_plic     = get_bool(json, "marker_normals_plic", vof.marker_normals_plic);
+    vof.marker_max_per_cell     = get_int(json, "marker_max_per_cell", vof.marker_max_per_cell);
+    vof.write_markers_vtk       = get_bool(json, "write_markers_vtk", vof.write_markers_vtk);
+    if (!out_block.empty()) {
+        vof.write_markers_vtk   = get_bool(out_block, "write_markers_vtk", vof.write_markers_vtk);
+    }
+
     std::string vof_block = extract_value(json, "vof");
     // Évaluation de la condition de contrôle
     if (!vof_block.empty()) {
         // Calcul et assignation numérique
-        vof.advection_method      = get_string(vof_block, "advection_method", vof.advection_method);
+        vof.advection_method        = get_string(vof_block, "advection_method", vof.advection_method);
         // Calcul et assignation numérique
-        vof.reconstruction_method = get_string(vof_block, "reconstruction_method", vof.reconstruction_method);
+        vof.reconstruction_method   = get_string(vof_block, "reconstruction_method", vof.reconstruction_method);
         // Calcul et assignation numérique
-        vof.tvd_limiter           = get_string(vof_block, "tvd_limiter", vof.tvd_limiter);
+        vof.tvd_limiter             = get_string(vof_block, "tvd_limiter", vof.tvd_limiter);
         // Calcul et assignation numérique
-        vof.cfl_vof               = get_double(vof_block, "cfl_vof", vof.cfl_vof);
+        vof.cfl_vof                 = get_double(vof_block, "cfl_vof", vof.cfl_vof);
+        vof.use_markers             = get_bool(vof_block, "use_markers", vof.use_markers);
+        vof.markers_per_cell        = get_int(vof_block, "markers_per_cell", vof.markers_per_cell);
+        vof.marker_advection_scheme = get_string(vof_block, "marker_advection_scheme", vof.marker_advection_scheme);
+        vof.marker_curvature        = get_bool(vof_block, "marker_curvature", vof.marker_curvature);
+        vof.marker_normals_plic     = get_bool(vof_block, "marker_normals_plic", vof.marker_normals_plic);
+        vof.marker_max_per_cell     = get_int(vof_block, "marker_max_per_cell", vof.marker_max_per_cell);
+        vof.write_markers_vtk       = get_bool(vof_block, "write_markers_vtk", vof.write_markers_vtk);
+    }
+    std::string markers_block = extract_value(json, "markers");
+    if (!markers_block.empty()) {
+        vof.use_markers             = get_bool(markers_block, "use_markers", vof.use_markers);
+        vof.use_markers             = get_bool(markers_block, "enabled", vof.use_markers);
+        vof.markers_per_cell        = get_int(markers_block, "markers_per_cell", vof.markers_per_cell);
+        vof.marker_advection_scheme = get_string(markers_block, "marker_advection_scheme", vof.marker_advection_scheme);
+        vof.marker_advection_scheme = get_string(markers_block, "advection_scheme", vof.marker_advection_scheme);
+        vof.marker_curvature        = get_bool(markers_block, "marker_curvature", vof.marker_curvature);
+        vof.marker_normals_plic     = get_bool(markers_block, "marker_normals_plic", vof.marker_normals_plic);
+        vof.marker_max_per_cell     = get_int(markers_block, "marker_max_per_cell", vof.marker_max_per_cell);
+        vof.write_markers_vtk       = get_bool(markers_block, "write_markers_vtk", vof.write_markers_vtk);
     }
     // Cohérence stricte : le schéma algébrique TVD ne s'accompagne d'aucune reconstruction géométrique,
     // tandis que les schémas géométriques (WEYMOUTH_YUE, CIAM) n'utilisent pas de limiteur TVD.
@@ -583,7 +613,14 @@ void Config::print() const {
                       << " (Algebrique, sans reconstruction) | Limiteur=" << vof.tvd_limiter << "\n";
         } else {
             std::cout << " VOF : Advection=" << vof.advection_method
-                      << " | Reconstruction=" << vof.reconstruction_method << "\n";
+                      << " | Reconstruction=" << vof.reconstruction_method;
+            if (vof.use_markers) {
+                std::cout << " | Marqueurs CVI=" << vof.marker_advection_scheme
+                          << " (N_init=" << vof.markers_per_cell
+                          << ", Courbure=" << (vof.marker_curvature ? "Oui" : "Non")
+                          << ", NormalesPLIC=" << (vof.marker_normals_plic ? "Oui" : "Non") << ")";
+            }
+            std::cout << "\n";
         }
     }
     // Calcul et assignation numérique

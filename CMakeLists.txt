@@ -24,6 +24,7 @@ set(SOURCES
     src/Preconditioner.cpp
     src/LinearSolver.cpp
     src/InterfaceReconstruction.cpp
+    src/InterfaceMarkers.cpp
     src/InterfaceTracker.cpp
     src/NavierStokesSolver.cpp
     src/VTKWriter.cpp

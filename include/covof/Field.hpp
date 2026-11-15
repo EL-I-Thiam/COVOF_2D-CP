@@ -2,6 +2,7 @@
 
 #include "Mesh.hpp"
 #include <vector>
+#include <cstdint>
 
 namespace covof {
 /**
@@ -69,6 +70,13 @@ public:
     std::vector<double> rhoe_star; ///< Énergie intermédiaire (rho*e)* après SSP-RK3
     std::vector<double> C_tilde;   ///< Fraction volumique lissée par diffusion pour courbure CSF
 
+    // Champs géométriques issus des marqueurs lagrangiens non connectés (Méthode hybride FC-WY-CVI-Marqueurs)
+    std::vector<double> marker_nx;          ///< Composante X de la normale issue des marqueurs (+grad C / |grad C|)
+    std::vector<double> marker_ny;          ///< Composante Y de la normale issue des marqueurs (+grad C / |grad C|)
+    std::vector<double> marker_kappa;       ///< Courbure parabolique locale issue des marqueurs
+    std::vector<uint8_t> has_marker_normal; ///< Indicateur de validité de la normale issue des marqueurs dans la maille
+    std::vector<uint8_t> has_marker_kappa;  ///< Indicateur de validité de la courbure issue des marqueurs dans la maille
+
     // Calcul et assignation numérique
     FlowFields() = default;
 
@@ -126,6 +134,12 @@ public:
         rhov_star.assign(n_v, 0.0);
         rhoe_star.assign(n_cells, 0.0);
         C_tilde.assign(n_cells, 0.0);
+
+        marker_nx.assign(n_cells, 0.0);
+        marker_ny.assign(n_cells, 0.0);
+        marker_kappa.assign(n_cells, 0.0);
+        has_marker_normal.assign(n_cells, 0);
+        has_marker_kappa.assign(n_cells, 0);
     }
 };
 

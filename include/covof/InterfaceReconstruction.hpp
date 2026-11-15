@@ -78,6 +78,14 @@ public:
                                 double nx, double ny, double C_target);
 
     /**
+     * @brief Extrait les deux extrémités (x1, y1) et (x2, y2) du segment PLIC nx*x + ny*y + alpha = 0
+     *        tronqué par la cellule rectangulaire [xmin, xmax] x [ymin, ymax]
+     */
+    static bool clip_segment_in_cell(double xmin, double xmax, double ymin, double ymax,
+                                     double nx, double ny, double alpha,
+                                     double& x1, double& y1, double& x2, double& y2);
+
+    /**
      * @brief Reconstruction SLIC (Simple Line Interface Calculation) sur l'ensemble du maillage
      */
     static void reconstruct_slic(const Mesh2D& mesh, const std::vector<double>& C,

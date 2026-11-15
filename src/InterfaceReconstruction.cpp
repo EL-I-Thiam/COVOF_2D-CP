@@ -140,6 +140,57 @@ double InterfaceReconstruction::compute_alpha(double xmin, double xmax, double y
 }
 
 // =============================================================================
+// EXTRACTION DES EXTRÉMITÉS D'UN SEGMENT PLIC DANS UNE CELLULE
+// =============================================================================
+
+bool InterfaceReconstruction::clip_segment_in_cell(double xmin, double xmax, double ymin, double ymax,
+                                                   double nx, double ny, double alpha,
+                                                   double& x1, double& y1, double& x2, double& y2) {
+    x1 = 0.0; y1 = 0.0; x2 = 0.0; y2 = 0.0;
+    double pts_x[4];
+    double pts_y[4];
+    int n_found = 0;
+    const double eps = 1.0e-12;
+    double tol_x = 1.0e-10 * (xmax - xmin);
+    double tol_y = 1.0e-10 * (ymax - ymin);
+
+    auto add_unique = [&](double px, double py) {
+        for (int k = 0; k < n_found; ++k) {
+            if (std::hypot(px - pts_x[k], py - pts_y[k]) <= 1.0e-9 * std::max(xmax - xmin, ymax - ymin)) {
+                return;
+            }
+        }
+        if (n_found < 4) {
+            pts_x[n_found] = std::clamp(px, xmin, xmax);
+            pts_y[n_found] = std::clamp(py, ymin, ymax);
+            n_found++;
+        }
+    };
+
+    if (std::abs(ny) > eps) {
+        double y_test = -(nx * xmin + alpha) / ny;
+        if (y_test >= ymin - tol_y && y_test <= ymax + tol_y) add_unique(xmin, y_test);
+        y_test = -(nx * xmax + alpha) / ny;
+        if (y_test >= ymin - tol_y && y_test <= ymax + tol_y) add_unique(xmax, y_test);
+    }
+    if (std::abs(nx) > eps) {
+        double x_test = -(ny * ymin + alpha) / nx;
+        if (x_test >= xmin - tol_x && x_test <= xmax + tol_x) add_unique(x_test, ymin);
+        x_test = -(ny * ymax + alpha) / nx;
+        if (x_test >= xmin - tol_x && x_test <= xmax + tol_x) add_unique(x_test, ymax);
+    }
+
+    if (n_found >= 2) {
+        x1 = pts_x[0];
+        y1 = pts_y[0];
+        x2 = pts_x[1];
+        y2 = pts_y[1];
+        return (std::hypot(x2 - x1, y2 - y1) > 1.0e-13 * std::max(xmax - xmin, ymax - ymin));
+    }
+    return false;
+}
+
+// =============================================================================
 // RECONSTRUCTION SLIC (NOH & WOODWARD 1976)
 // =============================================================================
 

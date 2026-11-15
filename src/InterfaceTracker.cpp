@@ -26,19 +26,44 @@ void InterfaceTracker::set_initial_condition(const Mesh2D& mesh, const InitialCo
                 fields.C[idx] = 1.0;
             // Calcul et assignation numérique
             } else if (ic.type == InitialConditionType::DROPLET) {
-                // Déclaration de variable typée
-                double dist = std::sqrt((x - ic.center_x) * (x - ic.center_x) +
-                                        (y - ic.center_y) * (y - ic.center_y)) - ic.radius;
-                // Évaluation de la condition de contrôle
-                if (dist < -eps) {
-                    // Calcul de la résolution géométrique de cellule
-                    fields.C[idx] = 1.0;
-                } else if (dist > eps) {
-                    // Calcul de la résolution géométrique de cellule
-                    fields.C[idx] = 0.0;
+                if (vof_cfg.use_markers) {
+                    double x_min = mesh.xv(i);
+                    double y_min = mesh.yv(j);
+                    double d_mid = std::hypot(x - ic.center_x, y - ic.center_y);
+                    double diag  = 0.5 * std::hypot(mesh.dx, mesh.dy);
+                    if (d_mid <= ic.radius - diag) {
+                        fields.C[idx] = 1.0;
+                    } else if (d_mid >= ic.radius + diag) {
+                        fields.C[idx] = 0.0;
+                    } else {
+                        int count_in = 0;
+                        const int N_SUB = 16;
+                        for (int sj = 0; sj < N_SUB; ++sj) {
+                            double ys = y_min + (sj + 0.5) * (mesh.dy / N_SUB);
+                            for (int si = 0; si < N_SUB; ++si) {
+                                double xs = x_min + (si + 0.5) * (mesh.dx / N_SUB);
+                                if (std::hypot(xs - ic.center_x, ys - ic.center_y) <= ic.radius) {
+                                    count_in++;
+                                }
+                            }
+                        }
+                        fields.C[idx] = static_cast<double>(count_in) / (N_SUB * N_SUB);
+                    }
                 } else {
-                    // Calcul de la résolution géométrique de cellule
-                    fields.C[idx] = 0.5 - dist / (2.0 * eps) - (1.0 / (2.0 * M_PI)) * std::sin(M_PI * dist / eps);
+                    // Déclaration de variable typée
+                    double dist = std::sqrt((x - ic.center_x) * (x - ic.center_x) +
+                                            (y - ic.center_y) * (y - ic.center_y)) - ic.radius;
+                    // Évaluation de la condition de contrôle
+                    if (dist < -eps) {
+                        // Calcul de la résolution géométrique de cellule
+                        fields.C[idx] = 1.0;
+                    } else if (dist > eps) {
+                        // Calcul de la résolution géométrique de cellule
+                        fields.C[idx] = 0.0;
+                    } else {
+                        // Calcul de la résolution géométrique de cellule
+                        fields.C[idx] = 0.5 - dist / (2.0 * eps) - (1.0 / (2.0 * M_PI)) * std::sin(M_PI * dist / eps);
+                    }
                 }
             // Calcul et assignation numérique
             } else if (ic.type == InitialConditionType::BUBBLE || ic.type == InitialConditionType::CYLINDER) {
@@ -157,19 +182,44 @@ void InterfaceTracker::set_initial_condition(const Mesh2D& mesh, const InitialCo
                 }
             // Calcul et assignation numérique
             } else if (ic.type == InitialConditionType::VORTEX_SHEAR) {
-                // Déclaration de variable typée
-                double dist = std::sqrt((x - ic.center_x) * (x - ic.center_x) +
-                                        (y - ic.center_y) * (y - ic.center_y)) - ic.radius;
-                // Évaluation de la condition de contrôle
-                if (dist < -eps) {
-                    // Calcul de la résolution géométrique de cellule
-                    fields.C[idx] = 1.0;
-                } else if (dist > eps) {
-                    // Calcul de la résolution géométrique de cellule
-                    fields.C[idx] = 0.0;
+                if (vof_cfg.use_markers) {
+                    double x_min = mesh.xv(i);
+                    double y_min = mesh.yv(j);
+                    double d_mid = std::hypot(x - ic.center_x, y - ic.center_y);
+                    double diag  = 0.5 * std::hypot(mesh.dx, mesh.dy);
+                    if (d_mid <= ic.radius - diag) {
+                        fields.C[idx] = 1.0;
+                    } else if (d_mid >= ic.radius + diag) {
+                        fields.C[idx] = 0.0;
+                    } else {
+                        int count_in = 0;
+                        const int N_SUB = 16;
+                        for (int sj = 0; sj < N_SUB; ++sj) {
+                            double ys = y_min + (sj + 0.5) * (mesh.dy / N_SUB);
+                            for (int si = 0; si < N_SUB; ++si) {
+                                double xs = x_min + (si + 0.5) * (mesh.dx / N_SUB);
+                                if (std::hypot(xs - ic.center_x, ys - ic.center_y) <= ic.radius) {
+                                    count_in++;
+                                }
+                            }
+                        }
+                        fields.C[idx] = static_cast<double>(count_in) / (N_SUB * N_SUB);
+                    }
                 } else {
-                    // Calcul de la résolution géométrique de cellule
-                    fields.C[idx] = 0.5 - dist / (2.0 * eps) - (1.0 / (2.0 * M_PI)) * std::sin(M_PI * dist / eps);
+                    // Déclaration de variable typée
+                    double dist = std::sqrt((x - ic.center_x) * (x - ic.center_x) +
+                                            (y - ic.center_y) * (y - ic.center_y)) - ic.radius;
+                    // Évaluation de la condition de contrôle
+                    if (dist < -eps) {
+                        // Calcul de la résolution géométrique de cellule
+                        fields.C[idx] = 1.0;
+                    } else if (dist > eps) {
+                        // Calcul de la résolution géométrique de cellule
+                        fields.C[idx] = 0.0;
+                    } else {
+                        // Calcul de la résolution géométrique de cellule
+                        fields.C[idx] = 0.5 - dist / (2.0 * eps) - (1.0 / (2.0 * M_PI)) * std::sin(M_PI * dist / eps);
+                    }
                 }
             // Calcul et assignation numérique
             } else if (ic.type == InitialConditionType::RAYLEIGH_TAYLOR) {
@@ -186,6 +236,9 @@ void InterfaceTracker::set_initial_condition(const Mesh2D& mesh, const InitialCo
         smooth_svof_helmholtz(mesh, fields);
     }
     update_physical_properties(mesh, fields);
+    if (vof_cfg.use_markers) {
+        markers.init_from_vof(mesh, vof_cfg, ic, bc, fields);
+    }
     compute_curvature_and_CSF(mesh, fields);
 }
 
@@ -343,19 +396,32 @@ void InterfaceTracker::update_physical_properties(const Mesh2D& mesh, FlowFields
     // Choix du champ couleur : lissé si SVOF activé, sinon standard C
     const std::vector<double>& c_src = (enable_svof_smoothing && !fields.C_s.empty()) ? fields.C_s : fields.C;
 
-    // Remplissage des mailles fantômes pour C (bords physiques et coins)
-    for (int j = 1; j <= ny; ++j) {
-        fields.C[mesh.cell_idx(0, j)]      = fields.C[mesh.cell_idx(1, j)];
-        fields.C[mesh.cell_idx(nx + 1, j)] = fields.C[mesh.cell_idx(nx, j)];
+    // Synchronisation MPI et bords physiques de C (sans écraser les halos MPI inter-processus)
+    if (mesh.is_boundary_left) {
+        for (int j = 1; j <= ny; ++j) fields.C[mesh.cell_idx(0, j)] = fields.C[mesh.cell_idx(1, j)];
     }
-    for (int i = 1; i <= nx; ++i) {
-        fields.C[mesh.cell_idx(i, 0)]      = fields.C[mesh.cell_idx(i, 1)];
-        fields.C[mesh.cell_idx(i, ny + 1)] = fields.C[mesh.cell_idx(i, ny)];
+    if (mesh.is_boundary_right) {
+        for (int j = 1; j <= ny; ++j) fields.C[mesh.cell_idx(nx + 1, j)] = fields.C[mesh.cell_idx(nx, j)];
     }
-    fields.C[mesh.cell_idx(0, 0)]           = fields.C[mesh.cell_idx(1, 1)];
-    fields.C[mesh.cell_idx(nx + 1, 0)]      = fields.C[mesh.cell_idx(nx, 1)];
-    fields.C[mesh.cell_idx(0, ny + 1)]      = fields.C[mesh.cell_idx(1, ny)];
-    fields.C[mesh.cell_idx(nx + 1, ny + 1)]  = fields.C[mesh.cell_idx(nx, ny)];
+    if (mesh.is_boundary_bottom) {
+        for (int i = 1; i <= nx; ++i) fields.C[mesh.cell_idx(i, 0)] = fields.C[mesh.cell_idx(i, 1)];
+    }
+    if (mesh.is_boundary_top) {
+        for (int i = 1; i <= nx; ++i) fields.C[mesh.cell_idx(i, ny + 1)] = fields.C[mesh.cell_idx(i, ny)];
+    }
+    MpiComm::sync_cell_scalar(mesh, fields.C);
+    if (mesh.is_boundary_left) {
+        for (int j = 0; j <= ny + 1; ++j) fields.C[mesh.cell_idx(0, j)] = fields.C[mesh.cell_idx(1, j)];
+    }
+    if (mesh.is_boundary_right) {
+        for (int j = 0; j <= ny + 1; ++j) fields.C[mesh.cell_idx(nx + 1, j)] = fields.C[mesh.cell_idx(nx, j)];
+    }
+    if (mesh.is_boundary_bottom) {
+        for (int i = 0; i <= nx + 1; ++i) fields.C[mesh.cell_idx(i, 0)] = fields.C[mesh.cell_idx(i, 1)];
+    }
+    if (mesh.is_boundary_top) {
+        for (int i = 0; i <= nx + 1; ++i) fields.C[mesh.cell_idx(i, ny + 1)] = fields.C[mesh.cell_idx(i, ny)];
+    }
 
     // 1. Masse volumique et viscosité au centre des cellules
     for (int j = 0; j <= ny + 1; ++j) {
@@ -388,41 +454,32 @@ void InterfaceTracker::update_physical_properties(const Mesh2D& mesh, FlowFields
         }
     }
 
-    // Remplissage des mailles fantômes pour rho et mu (avec prise en compte des CL périodiques)
-    for (int j = 1; j <= ny; ++j) {
-        if (!mesh.is_boundary_left) {
-            fields.rho[mesh.cell_idx(0, j)]      = fields.rho[mesh.cell_idx(nx, j)];
-            fields.rho[mesh.cell_idx(nx + 1, j)] = fields.rho[mesh.cell_idx(1, j)];
-            fields.mu[mesh.cell_idx(0, j)]       = fields.mu[mesh.cell_idx(nx, j)];
-            fields.mu[mesh.cell_idx(nx + 1, j)]  = fields.mu[mesh.cell_idx(1, j)];
-        } else {
-            fields.rho[mesh.cell_idx(0, j)]      = fields.rho[mesh.cell_idx(1, j)];
-            fields.rho[mesh.cell_idx(nx + 1, j)] = fields.rho[mesh.cell_idx(nx, j)];
-            fields.mu[mesh.cell_idx(0, j)]       = fields.mu[mesh.cell_idx(1, j)];
+    MpiComm::sync_cell_scalar(mesh, fields.rho);
+    MpiComm::sync_cell_scalar(mesh, fields.mu);
+    if (mesh.is_boundary_left) {
+        for (int j = 0; j <= ny + 1; ++j) {
+            fields.mu[mesh.cell_idx(0, j)]  = fields.mu[mesh.cell_idx(1, j)];
+            fields.rho[mesh.cell_idx(0, j)] = fields.rho[mesh.cell_idx(1, j)];
+        }
+    }
+    if (mesh.is_boundary_right) {
+        for (int j = 0; j <= ny + 1; ++j) {
             fields.mu[mesh.cell_idx(nx + 1, j)]  = fields.mu[mesh.cell_idx(nx, j)];
+            fields.rho[mesh.cell_idx(nx + 1, j)] = fields.rho[mesh.cell_idx(nx, j)];
         }
     }
-    for (int i = 1; i <= nx; ++i) {
-        if (!mesh.is_boundary_bottom) {
-            fields.rho[mesh.cell_idx(i, 0)]      = fields.rho[mesh.cell_idx(i, ny)];
-            fields.rho[mesh.cell_idx(i, ny + 1)] = fields.rho[mesh.cell_idx(i, 1)];
-            fields.mu[mesh.cell_idx(i, 0)]       = fields.mu[mesh.cell_idx(i, ny)];
-            fields.mu[mesh.cell_idx(i, ny + 1)]  = fields.mu[mesh.cell_idx(i, 1)];
-        } else {
-            fields.rho[mesh.cell_idx(i, 0)]      = fields.rho[mesh.cell_idx(i, 1)];
-            fields.rho[mesh.cell_idx(i, ny + 1)] = fields.rho[mesh.cell_idx(i, ny)];
-            fields.mu[mesh.cell_idx(i, 0)]       = fields.mu[mesh.cell_idx(i, 1)];
+    if (mesh.is_boundary_bottom) {
+        for (int i = 0; i <= nx + 1; ++i) {
+            fields.mu[mesh.cell_idx(i, 0)]  = fields.mu[mesh.cell_idx(i, 1)];
+            fields.rho[mesh.cell_idx(i, 0)] = fields.rho[mesh.cell_idx(i, 1)];
+        }
+    }
+    if (mesh.is_boundary_top) {
+        for (int i = 0; i <= nx + 1; ++i) {
             fields.mu[mesh.cell_idx(i, ny + 1)]  = fields.mu[mesh.cell_idx(i, ny)];
+            fields.rho[mesh.cell_idx(i, ny + 1)] = fields.rho[mesh.cell_idx(i, ny)];
         }
     }
-    fields.mu[mesh.cell_idx(0, 0)]           = fields.mu[mesh.cell_idx(1, 1)];
-    fields.mu[mesh.cell_idx(nx + 1, 0)]      = fields.mu[mesh.cell_idx(nx, 1)];
-    fields.mu[mesh.cell_idx(0, ny + 1)]      = fields.mu[mesh.cell_idx(1, ny)];
-    fields.mu[mesh.cell_idx(nx + 1, ny + 1)]  = fields.mu[mesh.cell_idx(nx, ny)];
-    fields.rho[mesh.cell_idx(0, 0)]          = fields.rho[mesh.cell_idx(1, 1)];
-    fields.rho[mesh.cell_idx(nx + 1, 0)]     = fields.rho[mesh.cell_idx(nx, 1)];
-    fields.rho[mesh.cell_idx(0, ny + 1)]     = fields.rho[mesh.cell_idx(1, ny)];
-    fields.rho[mesh.cell_idx(nx + 1, ny + 1)] = fields.rho[mesh.cell_idx(nx, ny)];
 
     // 2. Masse volumique sur les faces u
     for (int j = 1; j <= ny; ++j) {
@@ -545,6 +602,25 @@ void InterfaceTracker::compute_curvature_and_CSF(const Mesh2D& mesh, FlowFields&
     }
     MpiComm::sync_cell_scalar(mesh, fields.kappa);
 
+    // 2.5 Surcharge par la normale et la courbure parabolique issues des marqueurs si activés
+    if (vof_cfg.use_markers) {
+        for (int j = 1; j <= ny; ++j) {
+            for (int i = 1; i <= nx; ++i) {
+                int idx = mesh.cell_idx(i, j);
+                if (fields.has_marker_normal[idx]) {
+                    fields.norm_x[idx] = fields.marker_nx[idx];
+                    fields.norm_y[idx] = fields.marker_ny[idx];
+                }
+                if (vof_cfg.marker_curvature && fields.has_marker_kappa[idx]) {
+                    fields.kappa[idx] = fields.marker_kappa[idx];
+                }
+            }
+        }
+        MpiComm::sync_cell_scalar(mesh, fields.norm_x);
+        MpiComm::sync_cell_scalar(mesh, fields.norm_y);
+        MpiComm::sync_cell_scalar(mesh, fields.kappa);
+    }
+
     // 3. Force capillaire CSF équilibrée (balanced-force) sur les faces décalées
     // Selon X sur faces u
     for (int j = 1; j <= ny; ++j) {
@@ -552,10 +628,24 @@ void InterfaceTracker::compute_curvature_and_CSF(const Mesh2D& mesh, FlowFields&
         for (int i = 1; i <= nx + 1; ++i) {
             // Déclaration de variable typée
             int idx_u = mesh.u_idx(i, j);
+            int idx_L = mesh.cell_idx(i - 1, j);
+            int idx_R = mesh.cell_idx(i, j);
+            double kap_avg = 0.0;
+            if (vof_cfg.use_markers && vof_cfg.marker_curvature) {
+                if (fields.has_marker_kappa[idx_L] && fields.has_marker_kappa[idx_R]) {
+                    kap_avg = 0.5 * (fields.kappa[idx_L] + fields.kappa[idx_R]);
+                } else if (fields.has_marker_kappa[idx_L]) {
+                    kap_avg = fields.kappa[idx_L];
+                } else if (fields.has_marker_kappa[idx_R]) {
+                    kap_avg = fields.kappa[idx_R];
+                } else {
+                    kap_avg = 0.5 * (fields.kappa[idx_L] + fields.kappa[idx_R]);
+                }
+            } else {
+                kap_avg = 0.5 * (fields.kappa[idx_L] + fields.kappa[idx_R]);
+            }
             // Déclaration de variable typée
-            double kap_avg = 0.5 * (fields.kappa[mesh.cell_idx(i - 1, j)] + fields.kappa[mesh.cell_idx(i, j)]);
-            // Déclaration de variable typée
-            double grad_C = (fields.C[mesh.cell_idx(i, j)] - fields.C[mesh.cell_idx(i - 1, j)]) / dx;
+            double grad_C = (fields.C[idx_R] - fields.C[idx_L]) / dx;
             // Calcul de la résolution géométrique de cellule
             fields.F_sigma_x[idx_u] = sigma * kap_avg * grad_C;
         }
@@ -567,12 +657,52 @@ void InterfaceTracker::compute_curvature_and_CSF(const Mesh2D& mesh, FlowFields&
         for (int i = 1; i <= nx; ++i) {
             // Déclaration de variable typée
             int idx_v = mesh.v_idx(i, j);
+            int idx_B = mesh.cell_idx(i, j - 1);
+            int idx_T = mesh.cell_idx(i, j);
+            double kap_avg = 0.0;
+            if (vof_cfg.use_markers && vof_cfg.marker_curvature) {
+                if (fields.has_marker_kappa[idx_B] && fields.has_marker_kappa[idx_T]) {
+                    kap_avg = 0.5 * (fields.kappa[idx_B] + fields.kappa[idx_T]);
+                } else if (fields.has_marker_kappa[idx_B]) {
+                    kap_avg = fields.kappa[idx_B];
+                } else if (fields.has_marker_kappa[idx_T]) {
+                    kap_avg = fields.kappa[idx_T];
+                } else {
+                    kap_avg = 0.5 * (fields.kappa[idx_B] + fields.kappa[idx_T]);
+                }
+            } else {
+                kap_avg = 0.5 * (fields.kappa[idx_B] + fields.kappa[idx_T]);
+            }
             // Déclaration de variable typée
-            double kap_avg = 0.5 * (fields.kappa[mesh.cell_idx(i, j - 1)] + fields.kappa[mesh.cell_idx(i, j)]);
-            // Déclaration de variable typée
-            double grad_C = (fields.C[mesh.cell_idx(i, j)] - fields.C[mesh.cell_idx(i, j - 1)]) / dy;
+            double grad_C = (fields.C[idx_T] - fields.C[idx_B]) / dy;
             // Calcul de la résolution géométrique de cellule
             fields.F_sigma_y[idx_v] = sigma * kap_avg * grad_C;
+        }
+    }
+}
+
+void InterfaceTracker::apply_marker_normals_to_segments(const Mesh2D& mesh, const FlowFields& fields,
+                                                        const std::vector<double>& C_in) {
+    if (!vof_cfg.use_markers || !vof_cfg.marker_normals_plic) return;
+
+    int nx = mesh.nx_local;
+    int ny = mesh.ny_local;
+    for (int j = 0; j <= ny + 1; ++j) {
+        for (int i = 0; i <= nx + 1; ++i) {
+            int idx = mesh.cell_idx(i, j);
+            double c = C_in[idx];
+            if (c > 1.0e-6 && c < 1.0 - 1.0e-6 && fields.has_marker_normal[idx]) {
+                double snx = -fields.marker_nx[idx];
+                double sny = -fields.marker_ny[idx];
+                double nrm = std::hypot(snx, sny);
+                if (nrm > 1.0e-12) {
+                    snx /= nrm;
+                    sny /= nrm;
+                    double alpha = InterfaceReconstruction::compute_alpha(
+                        mesh.xv(i), mesh.xv(i + 1), mesh.yv(j), mesh.yv(j + 1), snx, sny, c);
+                    interface_segments[idx] = {snx, sny, alpha};
+                }
+            }
         }
     }
 }
@@ -614,6 +744,12 @@ void InterfaceTracker::advect(const Mesh2D& mesh, FlowFields& fields, double dt)
     update_physical_properties(mesh, fields);
     if (enable_diffusion_smoothing) {
         smooth_diffusion(mesh, fields);
+    }
+    if (vof_cfg.use_markers) {
+        markers.advect_rk2(mesh, vof_cfg, fields, dt);
+        markers.migrate_mpi(mesh, vof_cfg, bc);
+        markers.prune_and_reseed(mesh, vof_cfg, bc, fields);
+        markers.compute_curvature_from_markers(mesh, vof_cfg, bc, fields);
     }
     compute_curvature_and_CSF(mesh, fields);
 }
@@ -714,6 +850,7 @@ void InterfaceTracker::advect_ciam(const Mesh2D& mesh, FlowFields& fields, doubl
     // Fonction lambda pour un balayage directionnel X
     auto sweep_x = [&](std::vector<double>& C_in, std::vector<double>& C_out) {
         InterfaceReconstruction::reconstruct(recon_method, mesh, C_in, interface_segments);
+        apply_marker_normals_to_segments(mesh, fields, C_in);
         std::vector<double> flux_vol_x((nx + 2) * (ny + 2), 0.0);
 
         for (int j = 1; j <= ny; ++j) {
@@ -781,6 +918,7 @@ void InterfaceTracker::advect_ciam(const Mesh2D& mesh, FlowFields& fields, doubl
     // Fonction lambda pour un balayage directionnel Y
     auto sweep_y = [&](std::vector<double>& C_in, std::vector<double>& C_out) {
         InterfaceReconstruction::reconstruct(recon_method, mesh, C_in, interface_segments);
+        apply_marker_normals_to_segments(mesh, fields, C_in);
         std::vector<double> flux_vol_y((nx + 2) * (ny + 2), 0.0);
 
         for (int j = 1; j <= ny + 1; ++j) {
@@ -917,6 +1055,7 @@ void InterfaceTracker::advect_weymouth_yue(const Mesh2D& mesh, FlowFields& field
     auto sweep_x = [&](std::vector<double>& C_in, std::vector<double>& C_out, bool clamp_out) {
         fill_ghost_C(C_in);
         InterfaceReconstruction::reconstruct(recon_method, mesh, C_in, interface_segments);
+        apply_marker_normals_to_segments(mesh, fields, C_in);
         std::vector<double> f_vol_x((nx + 2) * (ny + 2), 0.0);
 
         for (int j = 1; j <= ny; ++j) {
@@ -969,6 +1108,7 @@ void InterfaceTracker::advect_weymouth_yue(const Mesh2D& mesh, FlowFields& field
     auto sweep_y = [&](std::vector<double>& C_in, std::vector<double>& C_out, bool clamp_out) {
         fill_ghost_C(C_in);
         InterfaceReconstruction::reconstruct(recon_method, mesh, C_in, interface_segments);
+        apply_marker_normals_to_segments(mesh, fields, C_in);
         std::vector<double> f_vol_y((nx + 2) * (ny + 2), 0.0);
 
         for (int j = 1; j <= ny + 1; ++j) {

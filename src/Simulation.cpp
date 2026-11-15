@@ -352,6 +352,9 @@ void Simulation::run() {
 
     // Sauvegarde initiale à t = 0.0
     vtk_writer.write_step(mesh, fields, step, t);
+    if (config.vof.use_markers && config.vof.write_markers_vtk) {
+        tracker.markers.write_vtk(mesh, config.output.output_dir, config.output.case_name, step);
+    }
     vtk_writer.write_diagnostics(mesh, fields, step, t, config.dt);
 
     // Évaluation de la condition de contrôle
@@ -592,6 +595,9 @@ void Simulation::run() {
         // Export des fichiers VTK
         if (step % config.output.vtk_interval == 0 || t >= config.t_final - 1.0e-10 * (std::abs(config.t_final) + 1.0)) {
             vtk_writer.write_step(mesh, fields, step, t);
+            if (config.vof.use_markers && config.vof.write_markers_vtk) {
+                tracker.markers.write_vtk(mesh, config.output.output_dir, config.output.case_name, step);
+            }
         }
     }
 
@@ -1980,6 +1986,9 @@ void Simulation::run_vortex_advection() {
 
     // Export initial
     vtk_writer.write_step(mesh, fields, 0, 0.0);
+    if (config.vof.use_markers && config.vof.write_markers_vtk) {
+        tracker.markers.write_vtk(mesh, config.output.output_dir, config.output.case_name, 0);
+    }
 
     // Déclaration de variable typée
     double t = 0.0;
@@ -2047,6 +2056,9 @@ void Simulation::run_vortex_advection() {
         // Évaluation de la condition de contrôle
         if (step % config.output.vtk_interval == 0 || t >= T_period || std::abs(t - 0.5 * T_period) < 0.5 * dt) {
             vtk_writer.write_step(mesh, fields, step, t);
+            if (config.vof.use_markers && config.vof.write_markers_vtk) {
+                tracker.markers.write_vtk(mesh, config.output.output_dir, config.output.case_name, step);
+            }
         }
 
         // Évaluation de la condition de contrôle

@@ -31,9 +31,9 @@ void MpiComm::sync_cell_scalar(const Mesh2D& mesh, std::vector<double>& field) {
     // Déclaration de variable typée
     std::vector<double> send_right(ny), recv_right(ny);
     // Déclaration de variable typée
-    std::vector<double> send_bot(nx), recv_bot(nx);
+    std::vector<double> send_bot(nx + 2), recv_bot(nx + 2);
     // Déclaration de variable typée
-    std::vector<double> send_top(nx), recv_top(nx);
+    std::vector<double> send_top(nx + 2), recv_top(nx + 2);
 
     // Préparation des buffers X
     for (int j = 1; j <= ny; ++j) {
@@ -79,27 +79,27 @@ void MpiComm::sync_cell_scalar(const Mesh2D& mesh, std::vector<double>& field) {
         for (int j = 1; j <= ny; ++j) field[mesh.cell_idx(nx + 1, j)] = recv_right[j - 1];
     }
 
-    // Préparation des buffers Y
-    for (int i = 1; i <= nx; ++i) {
+    // Préparation des buffers Y (incluant i = 0 et i = nx + 1 pour propager les 4 coins diagonaux)
+    for (int i = 0; i <= nx + 1; ++i) {
         // Calcul et assignation numérique
-        send_bot[i - 1] = field[mesh.cell_idx(i, 1)];
+        send_bot[i] = field[mesh.cell_idx(i, 1)];
         // Calcul et assignation numérique
-        send_top[i - 1] = field[mesh.cell_idx(i, ny)];
+        send_top[i] = field[mesh.cell_idx(i, ny)];
     }
 
     // Échanges Nord-Sud
     if (mesh.rank_bottom != MPI_PROC_NULL) {
         // Appel de communication ou synchronisation parallèle OpenMPI
-        MPI_Irecv(recv_bot.data(), nx, MPI_DOUBLE, mesh.rank_bottom, 20, mesh.comm, &reqs[n_reqs++]);
+        MPI_Irecv(recv_bot.data(), nx + 2, MPI_DOUBLE, mesh.rank_bottom, 20, mesh.comm, &reqs[n_reqs++]);
         // Appel de communication ou synchronisation parallèle OpenMPI
-        MPI_Isend(send_bot.data(), nx, MPI_DOUBLE, mesh.rank_bottom, 21, mesh.comm, &reqs[n_reqs++]);
+        MPI_Isend(send_bot.data(), nx + 2, MPI_DOUBLE, mesh.rank_bottom, 21, mesh.comm, &reqs[n_reqs++]);
     }
     // Évaluation de la condition de contrôle
     if (mesh.rank_top != MPI_PROC_NULL) {
         // Appel de communication ou synchronisation parallèle OpenMPI
-        MPI_Irecv(recv_top.data(), nx, MPI_DOUBLE, mesh.rank_top, 21, mesh.comm, &reqs[n_reqs++]);
+        MPI_Irecv(recv_top.data(), nx + 2, MPI_DOUBLE, mesh.rank_top, 21, mesh.comm, &reqs[n_reqs++]);
         // Appel de communication ou synchronisation parallèle OpenMPI
-        MPI_Isend(send_top.data(), nx, MPI_DOUBLE, mesh.rank_top, 20, mesh.comm, &reqs[n_reqs++]);
+        MPI_Isend(send_top.data(), nx + 2, MPI_DOUBLE, mesh.rank_top, 20, mesh.comm, &reqs[n_reqs++]);
     }
 
     // Appel de communication ou synchronisation parallèle OpenMPI
@@ -108,12 +108,12 @@ void MpiComm::sync_cell_scalar(const Mesh2D& mesh, std::vector<double>& field) {
     // Évaluation de la condition de contrôle
     if (mesh.rank_bottom != MPI_PROC_NULL) {
         // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
-        for (int i = 1; i <= nx; ++i) field[mesh.cell_idx(i, 0)] = recv_bot[i - 1];
+        for (int i = 0; i <= nx + 1; ++i) field[mesh.cell_idx(i, 0)] = recv_bot[i];
     }
     // Évaluation de la condition de contrôle
     if (mesh.rank_top != MPI_PROC_NULL) {
         // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
-        for (int i = 1; i <= nx; ++i) field[mesh.cell_idx(i, ny + 1)] = recv_top[i - 1];
+        for (int i = 0; i <= nx + 1; ++i) field[mesh.cell_idx(i, ny + 1)] = recv_top[i];
     }
 }
 
@@ -259,85 +259,56 @@ void MpiComm::sync_v(const Mesh2D& mesh, std::vector<double>& v) {
     // Déclaration de variable typée
     std::vector<double> send_top(nx), recv_top(nx);
 
-    // Boucle spatiale sur les cellules locales selon l'axe vertical Y (ordonnées)
-    for (int j = 0; j <= ny + 1; ++j) {
-        // Calcul et assignation numérique
-        send_left[j]  = v[mesh.v_idx(1, j)];
-        // Calcul et assignation numérique
-        send_right[j] = v[mesh.v_idx(nx, j)];
-    }
-
-    // Appel de communication ou synchronisation parallèle OpenMPI
     MPI_Request reqs[8];
-    // Déclaration de variable typée
     int n_reqs = 0;
 
-    // Évaluation de la condition de contrôle
-    if (mesh.rank_left != MPI_PROC_NULL) {
-        // Appel de communication ou synchronisation parallèle OpenMPI
-        MPI_Irecv(recv_left.data(), ny + 2, MPI_DOUBLE, mesh.rank_left, 50, mesh.comm, &reqs[n_reqs++]);
-        // Appel de communication ou synchronisation parallèle OpenMPI
-        MPI_Isend(send_left.data(), ny + 2, MPI_DOUBLE, mesh.rank_left, 51, mesh.comm, &reqs[n_reqs++]);
-    }
-    // Évaluation de la condition de contrôle
-    if (mesh.rank_right != MPI_PROC_NULL) {
-        // Appel de communication ou synchronisation parallèle OpenMPI
-        MPI_Irecv(recv_right.data(), ny + 2, MPI_DOUBLE, mesh.rank_right, 51, mesh.comm, &reqs[n_reqs++]);
-        // Appel de communication ou synchronisation parallèle OpenMPI
-        MPI_Isend(send_right.data(), ny + 2, MPI_DOUBLE, mesh.rank_right, 50, mesh.comm, &reqs[n_reqs++]);
-    }
-
-    // Appel de communication ou synchronisation parallèle OpenMPI
-    MPI_Waitall(n_reqs, reqs, MPI_STATUSES_IGNORE);
-    // Calcul et assignation numérique
-    n_reqs = 0;
-
-    // Évaluation de la condition de contrôle
-    if (mesh.rank_left != MPI_PROC_NULL) {
-        // Boucle spatiale sur les cellules locales selon l'axe vertical Y (ordonnées)
-        for (int j = 0; j <= ny + 1; ++j) v[mesh.v_idx(0, j)] = recv_left[j];
-    }
-    // Évaluation de la condition de contrôle
-    if (mesh.rank_right != MPI_PROC_NULL) {
-        // Boucle spatiale sur les cellules locales selon l'axe vertical Y (ordonnées)
-        for (int j = 0; j <= ny + 1; ++j) v[mesh.v_idx(nx + 1, j)] = recv_right[j];
-    }
-
-    // Échange selon Y
+    // 1. Échange selon Y d'abord (pour remplir j=0 et j=ny+1 sur 1..nx avant l'échange X)
     for (int i = 1; i <= nx; ++i) {
-        // Calcul et assignation numérique
         send_bot[i - 1] = v[mesh.v_idx(i, 1)];
-        // Calcul et assignation numérique
         send_top[i - 1] = v[mesh.v_idx(i, ny)];
     }
 
-    // Évaluation de la condition de contrôle
     if (mesh.rank_bottom != MPI_PROC_NULL) {
-        // Appel de communication ou synchronisation parallèle OpenMPI
         MPI_Irecv(recv_bot.data(), nx, MPI_DOUBLE, mesh.rank_bottom, 60, mesh.comm, &reqs[n_reqs++]);
-        // Appel de communication ou synchronisation parallèle OpenMPI
         MPI_Isend(send_bot.data(), nx, MPI_DOUBLE, mesh.rank_bottom, 61, mesh.comm, &reqs[n_reqs++]);
     }
-    // Évaluation de la condition de contrôle
     if (mesh.rank_top != MPI_PROC_NULL) {
-        // Appel de communication ou synchronisation parallèle OpenMPI
         MPI_Irecv(recv_top.data(), nx, MPI_DOUBLE, mesh.rank_top, 61, mesh.comm, &reqs[n_reqs++]);
-        // Appel de communication ou synchronisation parallèle OpenMPI
         MPI_Isend(send_top.data(), nx, MPI_DOUBLE, mesh.rank_top, 60, mesh.comm, &reqs[n_reqs++]);
     }
 
-    // Appel de communication ou synchronisation parallèle OpenMPI
     MPI_Waitall(n_reqs, reqs, MPI_STATUSES_IGNORE);
+    n_reqs = 0;
 
-    // Évaluation de la condition de contrôle
     if (mesh.rank_bottom != MPI_PROC_NULL) {
-        // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
         for (int i = 1; i <= nx; ++i) v[mesh.v_idx(i, 0)] = recv_bot[i - 1];
     }
-    // Évaluation de la condition de contrôle
     if (mesh.rank_top != MPI_PROC_NULL) {
-        // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
         for (int i = 1; i <= nx; ++i) v[mesh.v_idx(i, ny + 1)] = recv_top[i - 1];
+    }
+
+    // 2. Échange selon X ensuite (sur j = 0 .. ny + 1, propageant aussi les coins Nord/Sud)
+    for (int j = 0; j <= ny + 1; ++j) {
+        send_left[j]  = v[mesh.v_idx(1, j)];
+        send_right[j] = v[mesh.v_idx(nx, j)];
+    }
+
+    if (mesh.rank_left != MPI_PROC_NULL) {
+        MPI_Irecv(recv_left.data(), ny + 2, MPI_DOUBLE, mesh.rank_left, 50, mesh.comm, &reqs[n_reqs++]);
+        MPI_Isend(send_left.data(), ny + 2, MPI_DOUBLE, mesh.rank_left, 51, mesh.comm, &reqs[n_reqs++]);
+    }
+    if (mesh.rank_right != MPI_PROC_NULL) {
+        MPI_Irecv(recv_right.data(), ny + 2, MPI_DOUBLE, mesh.rank_right, 51, mesh.comm, &reqs[n_reqs++]);
+        MPI_Isend(send_right.data(), ny + 2, MPI_DOUBLE, mesh.rank_right, 50, mesh.comm, &reqs[n_reqs++]);
+    }
+
+    MPI_Waitall(n_reqs, reqs, MPI_STATUSES_IGNORE);
+
+    if (mesh.rank_left != MPI_PROC_NULL) {
+        for (int j = 0; j <= ny + 1; ++j) v[mesh.v_idx(0, j)] = recv_left[j];
+    }
+    if (mesh.rank_right != MPI_PROC_NULL) {
+        for (int j = 0; j <= ny + 1; ++j) v[mesh.v_idx(nx + 1, j)] = recv_right[j];
     }
 }
 
