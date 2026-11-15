@@ -104,6 +104,14 @@ void InterfaceMarkers::init_from_vof(const Mesh2D& mesh, const VofConfig& vof_cf
 
 // =============================================================================
 // 2. INTERPOLATION CONSERVATRICE DE LA VITESSE (CVI) SUR GRILLE MAC
+//    Variante B exacte (Wang et al., 2015 ; Pusok et al., 2017) :
+//    - Interpole u sur sa boîte décalée [x_i^f, x_{i+1}^f] x [y_{j_u}^c, y_{j_u+1}^c]
+//      avec j_u in {j-1, j} ;
+//    - Interpole v sur sa boîte décalée [x_{i_v}^c, x_{i_v+1}^c] x [y_j^f, y_{j+1}^f]
+//      avec i_v in {i-1, i} ;
+//    - Garantit analytiquement dans les 4 sous-quadrants de (i, j) :
+//      du_CVI/dx + dv_CVI/dy = (u(i+1,j)-u(i,j))/dx + (v(i,j+1)-v(i,j))/dy = D_{i,j}
+//      en restant strictement dans le halo unique (0:nx+1, 0:ny+1).
 // =============================================================================
 
 void InterfaceMarkers::interpolate_velocity_cvi(const Mesh2D& mesh, const FlowFields& fields,
@@ -122,31 +130,43 @@ void InterfaceMarkers::interpolate_velocity_cvi(const Mesh2D& mesh, const FlowFi
     i = std::clamp(i, 1, nx);
     j = std::clamp(j, 1, ny);
 
-    double xi  = std::clamp((xp - mesh.xu(i)) / dx, 0.0, 1.0);
-    double eta = std::clamp((yp - mesh.yv(j)) / dy, 0.0, 1.0);
+    // Indices des boîtes décalées MAC (j_u in {j-1, j} subset [0, ny], i_v in {i-1, i} subset [0, nx])
+    int j_u = (yp < mesh.yc(j)) ? (j - 1) : j;
+    int i_v = (xp < mesh.xc(i)) ? (i - 1) : i;
 
-    // Vitesses aux 4 faces de la cellule (i, j)
-    double u_W = fields.u[mesh.u_idx(i,     j)];
-    double u_E = fields.u[mesh.u_idx(i + 1, j)];
-    double v_S = fields.v[mesh.v_idx(i, j    )];
-    double v_N = fields.v[mesh.v_idx(i, j + 1)];
+    // Coordonnées réduites locales dans chacune des boîtes décalées
+    double xi_u  = std::clamp((xp - mesh.xu(i))   / dx, 0.0, 1.0);
+    double eta_u = std::clamp((yp - mesh.yc(j_u)) / dy, 0.0, 1.0);
+    double xi_v  = std::clamp((xp - mesh.xc(i_v)) / dx, 0.0, 1.0);
+    double eta_v = std::clamp((yp - mesh.yv(j))   / dy, 0.0, 1.0);
 
-    // Pentes transversales centrées d'ordre 2 utilisant la couche de mailles fantômes synchronisées
-    double du_W = 0.5 * (fields.u[mesh.u_idx(i,     j + 1)] - fields.u[mesh.u_idx(i,     j - 1)]);
-    double du_E = 0.5 * (fields.u[mesh.u_idx(i + 1, j + 1)] - fields.u[mesh.u_idx(i + 1, j - 1)]);
-    double dv_S = 0.5 * (fields.v[mesh.v_idx(i + 1, j    )] - fields.v[mesh.v_idx(i - 1, j    )]);
-    double dv_N = 0.5 * (fields.v[mesh.v_idx(i + 1, j + 1)] - fields.v[mesh.v_idx(i - 1, j + 1)]);
+    // Sommets MAC de la boîte décalée u : [x_i^f, x_{i+1}^f] x [y_{j_u}^c, y_{j_u+1}^c]
+    double u_sw = fields.u[mesh.u_idx(i,     j_u    )];
+    double u_se = fields.u[mesh.u_idx(i + 1, j_u    )];
+    double u_nw = fields.u[mesh.u_idx(i,     j_u + 1)];
+    double u_ne = fields.u[mesh.u_idx(i + 1, j_u + 1)];
 
-    // Partie bilinéaire MAC
-    double u_bilin = (1.0 - xi) * (u_W + (eta - 0.5) * du_W)
-                   +        xi  * (u_E + (eta - 0.5) * du_E);
-    double v_bilin = (1.0 - eta) * (v_S + (xi - 0.5) * dv_S)
-                   +        eta  * (v_N + (xi - 0.5) * dv_N);
+    // Sommets MAC de la boîte décalée v : [x_{i_v}^c, x_{i_v+1}^c] x [y_j^f, y_{j+1}^f]
+    double v_sw = fields.v[mesh.v_idx(i_v,     j    )];
+    double v_se = fields.v[mesh.v_idx(i_v + 1, j    )];
+    double v_nw = fields.v[mesh.v_idx(i_v,     j + 1)];
+    double v_ne = fields.v[mesh.v_idx(i_v + 1, j + 1)];
 
-    // Correction quadratique solénoïdale CVI H(div)-conforme :
-    // garantit d(u_CVI)/dx + d(v_CVI)/dy == (u_E - u_W)/dx + (v_N - v_S)/dy en tout point (xi, eta)
-    double corr_u = 0.5 * (dx / dy) * xi * (1.0 - xi) * (dv_N - dv_S);
-    double corr_v = 0.5 * (dy / dx) * eta * (1.0 - eta) * (du_E - du_W);
+    double du_s = u_se - u_sw;
+    double du_n = u_ne - u_nw;
+    double dv_w = v_nw - v_sw;
+    double dv_e = v_ne - v_se;
+
+    // Partie bilinéaire sur chaque boîte décalée MAC
+    double u_bilin = (1.0 - eta_u) * ((1.0 - xi_u) * u_sw + xi_u * u_se)
+                   +        eta_u  * ((1.0 - xi_u) * u_nw + xi_u * u_ne);
+    double v_bilin = (1.0 - xi_v)  * ((1.0 - eta_v) * v_sw + eta_v * v_nw)
+                   +        xi_v   * ((1.0 - eta_v) * v_se + eta_v * v_ne);
+
+    // Correction quadratique solénoïdale CVI H(div)-conforme (Variante B exacte) :
+    // garantit d(u_CVI)/dx + d(v_CVI)/dy == (u(i+1,j) - u(i,j))/dx + (v(i,j+1) - v(i,j))/dy == D_{i,j}
+    double corr_u = 0.5 * (dx / dy) * xi_u  * (1.0 - xi_u)  * (dv_e - dv_w);
+    double corr_v = 0.5 * (dy / dx) * eta_v * (1.0 - eta_v) * (du_n - du_s);
 
     up = u_bilin + corr_u;
     vp = v_bilin + corr_v;
@@ -164,25 +184,32 @@ void InterfaceMarkers::interpolate_velocity_bilinear(const Mesh2D& mesh, const F
     i = std::clamp(i, 1, nx);
     j = std::clamp(j, 1, ny);
 
-    double xi  = std::clamp((xp - mesh.xu(i)) / dx, 0.0, 1.0);
-    double eta = std::clamp((yp - mesh.yv(j)) / dy, 0.0, 1.0);
+    int j_u = (yp < mesh.yc(j)) ? (j - 1) : j;
+    int i_v = (xp < mesh.xc(i)) ? (i - 1) : i;
 
-    double u_W = fields.u[mesh.u_idx(i,     j)];
-    double u_E = fields.u[mesh.u_idx(i + 1, j)];
-    double v_S = fields.v[mesh.v_idx(i, j    )];
-    double v_N = fields.v[mesh.v_idx(i, j + 1)];
+    double xi_u  = std::clamp((xp - mesh.xu(i))   / dx, 0.0, 1.0);
+    double eta_u = std::clamp((yp - mesh.yc(j_u)) / dy, 0.0, 1.0);
+    double xi_v  = std::clamp((xp - mesh.xc(i_v)) / dx, 0.0, 1.0);
+    double eta_v = std::clamp((yp - mesh.yv(j))   / dy, 0.0, 1.0);
 
-    double du_W = 0.5 * (fields.u[mesh.u_idx(i,     j + 1)] - fields.u[mesh.u_idx(i,     j - 1)]);
-    double du_E = 0.5 * (fields.u[mesh.u_idx(i + 1, j + 1)] - fields.u[mesh.u_idx(i + 1, j - 1)]);
-    double dv_S = 0.5 * (fields.v[mesh.v_idx(i + 1, j    )] - fields.v[mesh.v_idx(i - 1, j    )]);
-    double dv_N = 0.5 * (fields.v[mesh.v_idx(i + 1, j + 1)] - fields.v[mesh.v_idx(i - 1, j + 1)]);
+    double u_sw = fields.u[mesh.u_idx(i,     j_u    )];
+    double u_se = fields.u[mesh.u_idx(i + 1, j_u    )];
+    double u_nw = fields.u[mesh.u_idx(i,     j_u + 1)];
+    double u_ne = fields.u[mesh.u_idx(i + 1, j_u + 1)];
 
-    up = (1.0 - xi) * (u_W + (eta - 0.5) * du_W) + xi * (u_E + (eta - 0.5) * du_E);
-    vp = (1.0 - eta) * (v_S + (xi - 0.5) * dv_S) + eta * (v_N + (xi - 0.5) * dv_N);
+    double v_sw = fields.v[mesh.v_idx(i_v,     j    )];
+    double v_se = fields.v[mesh.v_idx(i_v + 1, j    )];
+    double v_nw = fields.v[mesh.v_idx(i_v,     j + 1)];
+    double v_ne = fields.v[mesh.v_idx(i_v + 1, j + 1)];
+
+    up = (1.0 - eta_u) * ((1.0 - xi_u) * u_sw + xi_u * u_se)
+       +        eta_u  * ((1.0 - xi_u) * u_nw + xi_u * u_ne);
+    vp = (1.0 - xi_v)  * ((1.0 - eta_v) * v_sw + eta_v * v_nw)
+       +        xi_v   * ((1.0 - eta_v) * v_se + eta_v * v_ne);
 }
 
 // =============================================================================
-// 3. ADVECTION LAGRANGIENNE RK2 EXPLICITE
+// 3. ADVECTION LAGRANGIENNE RK2 EXPLICITE (HEUN D'ORDRE 2)
 // =============================================================================
 
 void InterfaceMarkers::advect_rk2(const Mesh2D& mesh, const VofConfig& vof_cfg,
@@ -201,18 +228,18 @@ void InterfaceMarkers::advect_rk2(const Mesh2D& mesh, const VofConfig& vof_cfg,
 
         if (use_bilinear) {
             interpolate_velocity_bilinear(mesh, fields, x0, y0, u1, v1);
-            double x_mid = x0 + 0.5 * dt * u1;
-            double y_mid = y0 + 0.5 * dt * v1;
-            interpolate_velocity_bilinear(mesh, fields, x_mid, y_mid, u2, v2);
+            double x_star = x0 + dt * u1;
+            double y_star = y0 + dt * v1;
+            interpolate_velocity_bilinear(mesh, fields, x_star, y_star, u2, v2);
         } else {
             interpolate_velocity_cvi(mesh, fields, x0, y0, u1, v1);
-            double x_mid = x0 + 0.5 * dt * u1;
-            double y_mid = y0 + 0.5 * dt * v1;
-            interpolate_velocity_cvi(mesh, fields, x_mid, y_mid, u2, v2);
+            double x_star = x0 + dt * u1;
+            double y_star = y0 + dt * v1;
+            interpolate_velocity_cvi(mesh, fields, x_star, y_star, u2, v2);
         }
 
-        mk.x = x0 + dt * u2;
-        mk.y = y0 + dt * v2;
+        mk.x = x0 + 0.5 * dt * (u1 + u2);
+        mk.y = y0 + 0.5 * dt * (v1 + v2);
     }
 }
 
