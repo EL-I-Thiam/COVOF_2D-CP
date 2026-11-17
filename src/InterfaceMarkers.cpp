@@ -442,12 +442,13 @@ void InterfaceMarkers::prune_and_reseed(const Mesh2D& mesh, const VofConfig& vof
             continue;
         }
         double c_cell = fields.C[mesh.cell_idx(ci, cj)];
-        if (c_cell <= 0.01 || c_cell >= 1.0 - 0.01) {
+        if (c_cell <= 0.02 || c_cell >= 1.0 - 0.02) {
             bool near_mixed = false;
             for (int dj = -1; dj <= 1 && !near_mixed; ++dj) {
                 for (int di = -1; di <= 1; ++di) {
+                    if (di == 0 && dj == 0) continue;
                     double c_nb = fields.C[mesh.cell_idx(ci + di, cj + dj)];
-                    if (c_nb > 0.01 && c_nb < 1.0 - 0.01) {
+                    if (c_nb > 0.05 && c_nb < 1.0 - 0.05) {
                         near_mixed = true;
                         break;
                     }
@@ -540,52 +541,103 @@ void InterfaceMarkers::prune_and_reseed(const Mesh2D& mesh, const VofConfig& vof
         }
     }
 
-    // 3. Ré-ensemencement local (reseeding) dans les cellules mixtes franches (0.05 < C < 0.95)
-    //    dépourvues de marqueurs
+    // 3. Ré-ensemencement local avec FILTRAGE GÉOMÉTRIQUE STRICT :
+    //    Interdire l'injection de marqueurs dès que la cellule ne possède pas une normale PLIC univoque
+    //    cohérente avec le front principal, pour empêcher toute apparition de marqueurs orphelins.
+    double h = std::max(dx, dy);
+    double min_grad = 0.25 / h; // Gradient franc obligatoire (interdit dans les queues de diffusion)
+
     for (int j = 1; j <= ny; ++j) {
         for (int i = 1; i <= nx; ++i) {
             int idx = mesh.cell_idx(i, j);
             double c = fields.C[idx];
-            if (c > 0.05 && c < 0.95 && cell_counts[idx] == 0) {
-                double c_mm = fields.C[mesh.cell_idx(i - 1, j - 1)];
-                double c_0m = fields.C[mesh.cell_idx(i,     j - 1)];
-                double c_pm = fields.C[mesh.cell_idx(i + 1, j - 1)];
-                double c_m0 = fields.C[mesh.cell_idx(i - 1, j    )];
-                double c_p0 = fields.C[mesh.cell_idx(i + 1, j    )];
-                double c_mp = fields.C[mesh.cell_idx(i - 1, j + 1)];
-                double c_0p = fields.C[mesh.cell_idx(i,     j + 1)];
-                double c_pp = fields.C[mesh.cell_idx(i + 1, j + 1)];
 
-                double mx = -((c_pp + 2.0 * c_p0 + c_pm) - (c_mp + 2.0 * c_m0 + c_mm)) / (8.0 * dx);
-                double my = -((c_pp + 2.0 * c_0p + c_mp) - (c_pm + 2.0 * c_0m + c_mm)) / (8.0 * dy);
-                double nrm = std::hypot(mx, my);
-                double snx = (nrm > 1.0e-12) ? (mx / nrm) : 1.0;
-                double sny = (nrm > 1.0e-12) ? (my / nrm) : 0.0;
+            // Condition 3.1 : Cellule mixte franche (seuil resserré 0.05 < C < 0.95) dépourvue de marqueurs
+            if (c <= 0.05 || c >= 0.95 || cell_counts[idx] > 0) continue;
 
-                double xmin = mesh.xv(i);
-                double xmax = mesh.xv(i + 1);
-                double ymin = mesh.yv(j);
-                double ymax = mesh.yv(j + 1);
-                double alpha = InterfaceReconstruction::compute_alpha(xmin, xmax, ymin, ymax, snx, sny, c);
+            // Condition 3.2 : Continuité avec le front principal existant
+            // Une cellule ne peut être ré-ensemencée que si elle est contiguë à des marqueurs actifs existants
+            bool has_marker_neighbor = false;
+            double c_min_nb = 1.0;
+            double c_max_nb = 0.0;
+            for (int dj = -1; dj <= 1; ++dj) {
+                for (int di = -1; di <= 1; ++di) {
+                    if (di == 0 && dj == 0) continue;
+                    int nb_idx = mesh.cell_idx(i + di, j + dj);
+                    if (cell_counts[nb_idx] > 0) has_marker_neighbor = true;
+                    double c_nb = fields.C[nb_idx];
+                    if (c_nb < c_min_nb) c_min_nb = c_nb;
+                    if (c_nb > c_max_nb) c_max_nb = c_nb;
+                }
+            }
+            if (!has_marker_neighbor) continue; // Cellule isolée du front principal : INTERDIT
 
-                double x1 = 0.0, y1 = 0.0, x2 = 0.0, y2 = 0.0;
-                if (InterfaceReconstruction::clip_segment_in_cell(xmin, xmax, ymin, ymax,
-                                                                  snx, sny, alpha,
-                                                                  x1, y1, x2, y2)) {
-                    for (int m = 0; m < n_per_cell; ++m) {
-                        double s = (static_cast<double>(m) + 0.5) / static_cast<double>(n_per_cell);
-                        Marker mk;
-                        mk.x = x1 + s * (x2 - x1);
-                        mk.y = y1 + s * (y2 - y1);
-                        mk.nx = -snx;
-                        mk.ny = -sny;
-                        mk.kappa = 0.0;
-                        mk.cell_i = i;
-                        mk.cell_j = j;
-                        mk.active = true;
-                        cloud.push_back(mk);
+            // Condition 3.3 : Présence obligatoire des deux phases dans le voisinage 3x3 (vrai saut d'interface)
+            if (c_min_nb > 0.45 || c_max_nb < 0.55) continue;
+
+            // Condition 3.4 : Normale univoque par gradient de Youngs avec magnitude suffisante
+            double c_mm = fields.C[mesh.cell_idx(i - 1, j - 1)];
+            double c_0m = fields.C[mesh.cell_idx(i,     j - 1)];
+            double c_pm = fields.C[mesh.cell_idx(i + 1, j - 1)];
+            double c_m0 = fields.C[mesh.cell_idx(i - 1, j    )];
+            double c_p0 = fields.C[mesh.cell_idx(i + 1, j    )];
+            double c_mp = fields.C[mesh.cell_idx(i - 1, j + 1)];
+            double c_0p = fields.C[mesh.cell_idx(i,     j + 1)];
+            double c_pp = fields.C[mesh.cell_idx(i + 1, j + 1)];
+
+            double mx = -((c_pp + 2.0 * c_p0 + c_pm) - (c_mp + 2.0 * c_m0 + c_mm)) / (8.0 * dx);
+            double my = -((c_pp + 2.0 * c_0p + c_mp) - (c_pm + 2.0 * c_0m + c_mm)) / (8.0 * dy);
+            double nrm = std::hypot(mx, my);
+
+            if (nrm < min_grad) continue; // Gradient diffus ou non univoque : INTERDIT
+
+            double snx = mx / nrm;
+            double sny = my / nrm;
+
+            // Condition 3.5 : Cohérence angulaire de la normale avec les marqueurs du front principal (n . n_nb >= 0.5)
+            // Empêche toute normale PLIC aberrante ou discordante
+            bool normal_coherent = false;
+            for (const auto& mk_ex : cloud) {
+                if (!mk_ex.active) continue;
+                if (std::abs(mk_ex.cell_i - i) <= 1 && std::abs(mk_ex.cell_j - j) <= 1) {
+                    // Dans COVOF : mk.nx pointe vers +grad C (-snx)
+                    double dot_prod = (-snx) * mk_ex.nx + (-sny) * mk_ex.ny;
+                    if (dot_prod >= 0.5) {
+                        normal_coherent = true;
+                        break;
                     }
                 }
+            }
+            if (!normal_coherent) continue; // Normale discordante avec le front principal : INTERDIT
+
+            // Condition 3.6 : Découpage PLIC et longueur minimale de segment
+            double xmin = mesh.xv(i);
+            double xmax = mesh.xv(i + 1);
+            double ymin = mesh.yv(j);
+            double ymax = mesh.yv(j + 1);
+            double alpha = InterfaceReconstruction::compute_alpha(xmin, xmax, ymin, ymax, snx, sny, c);
+
+            double x1 = 0.0, y1 = 0.0, x2 = 0.0, y2 = 0.0;
+            if (InterfaceReconstruction::clip_segment_in_cell(xmin, xmax, ymin, ymax,
+                                                              snx, sny, alpha,
+                                                              x1, y1, x2, y2)) {
+                double seg_len = std::hypot(x2 - x1, y2 - y1);
+                if (seg_len < 0.15 * h) continue; // Segment dégénéré : INTERDIT
+
+                for (int m = 0; m < n_per_cell; ++m) {
+                    double s = (static_cast<double>(m) + 0.5) / static_cast<double>(n_per_cell);
+                    Marker mk;
+                    mk.x = x1 + s * (x2 - x1);
+                    mk.y = y1 + s * (y2 - y1);
+                    mk.nx = -snx;
+                    mk.ny = -sny;
+                    mk.kappa = 0.0;
+                    mk.cell_i = i;
+                    mk.cell_j = j;
+                    mk.active = true;
+                    cloud.push_back(mk);
+                }
+                cell_counts[idx] = n_per_cell;
             }
         }
     }
