@@ -164,23 +164,29 @@ int BiCGSTAB2Solver::solve(const NavierStokesSolver& op, const PreconditionerBas
         // Déclaration de variable typée
         double rhs2    = MpiComm::global_dot_product(mesh, r[0], r[2], n);
 
-        // Déclaration de variable typée
-        double det = sigma11 * sigma22 - sigma12 * sigma12;
-        // Déclaration de variable typée
-        double s11_s22 = sigma11 * sigma22;
-        // Déclaration de variable typée
+        // Minimisation quadratique normalisée et invariante d'échelle (Sleijpen & van der Vorst)
+        double n1 = std::sqrt(sigma11);
+        double n2 = std::sqrt(sigma22);
         double gamma1 = 0.0, gamma2 = 0.0;
-        // Évaluation de la condition de contrôle
-        if (s11_s22 < 1.0e-30 || std::abs(det) < 1.0e-10 * s11_s22) {
-            // Calcul et assignation numérique
+        if (n1 < 1.0e-300) {
+            break;
+        } else if (n2 < 1.0e-300) {
             gamma2 = 0.0;
-            // Calcul et assignation numérique
-            gamma1 = rhs1 / (sigma11 + 1.0e-30);
+            gamma1 = rhs1 / sigma11;
         } else {
-            // Calcul et assignation numérique
-            gamma1 = (rhs1 * sigma22 - rhs2 * sigma12) / det;
-            // Calcul et assignation numérique
-            gamma2 = (rhs2 * sigma11 - rhs1 * sigma12) / det;
+            double inv_n1 = 1.0 / n1;
+            double inv_n2 = 1.0 / n2;
+            double c12 = sigma12 * inv_n1 * inv_n2;
+            double b1 = rhs1 * inv_n1;
+            double b2 = rhs2 * inv_n2;
+            double det = 1.0 - c12 * c12;
+            if (std::abs(det) < 1.0e-14) {
+                gamma2 = 0.0;
+                gamma1 = b1 * inv_n1;
+            } else {
+                gamma1 = (b1 - c12 * b2) / (det * n1);
+                gamma2 = (b2 - c12 * b1) / (det * n2);
+            }
         }
 
         // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
@@ -193,7 +199,7 @@ int BiCGSTAB2Solver::solve(const NavierStokesSolver& op, const PreconditionerBas
             u[0][i] -= (gamma1 * u[1][i] + gamma2 * u[2][i]);
         }
         // Calcul et assignation numérique
-        omega = (gamma2 != 0.0) ? gamma2 : ((std::abs(gamma1) > 1.0e-30) ? -gamma1 : 1.0);
+        omega = (gamma2 != 0.0) ? gamma2 : ((std::abs(gamma1) > 1.0e-300) ? gamma1 : 1.0);
 
         // Déclaration de variable typée
         double r_norm = MpiComm::global_norm2(mesh, r[0], n);
