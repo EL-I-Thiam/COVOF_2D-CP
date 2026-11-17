@@ -687,20 +687,48 @@ void InterfaceTracker::apply_marker_normals_to_segments(const Mesh2D& mesh, cons
 
     int nx = mesh.nx_local;
     int ny = mesh.ny_local;
-    for (int j = 0; j <= ny + 1; ++j) {
-        for (int i = 0; i <= nx + 1; ++i) {
+    double dx = mesh.dx;
+    double dy = mesh.dy;
+
+    for (int j = 1; j <= ny; ++j) {
+        for (int i = 1; i <= nx; ++i) {
             int idx = mesh.cell_idx(i, j);
             double c = C_in[idx];
-            if (c > 1.0e-6 && c < 1.0 - 1.0e-6 && fields.has_marker_normal[idx]) {
+            if (c > 1.0e-4 && c < 1.0 - 1.0e-4 && fields.has_marker_normal[idx]) {
                 double snx = -fields.marker_nx[idx];
                 double sny = -fields.marker_ny[idx];
                 double nrm = std::hypot(snx, sny);
                 if (nrm > 1.0e-12) {
                     snx /= nrm;
                     sny /= nrm;
-                    double alpha = InterfaceReconstruction::compute_alpha(
-                        mesh.xv(i), mesh.xv(i + 1), mesh.yv(j), mesh.yv(j + 1), snx, sny, c);
-                    interface_segments[idx] = {snx, sny, alpha};
+
+                    // Contrôle de cohérence angulaire avec le gradient volumique de C (ELVIRA / Youngs)
+                    double c_mm = C_in[mesh.cell_idx(i - 1, j - 1)];
+                    double c_0m = C_in[mesh.cell_idx(i,     j - 1)];
+                    double c_pm = C_in[mesh.cell_idx(i + 1, j - 1)];
+                    double c_m0 = C_in[mesh.cell_idx(i - 1, j    )];
+                    double c_p0 = C_in[mesh.cell_idx(i + 1, j    )];
+                    double c_mp = C_in[mesh.cell_idx(i - 1, j + 1)];
+                    double c_0p = C_in[mesh.cell_idx(i,     j + 1)];
+                    double c_pp = C_in[mesh.cell_idx(i + 1, j + 1)];
+
+                    double gx = -((c_pp + 2.0 * c_p0 + c_pm) - (c_mp + 2.0 * c_m0 + c_mm)) / (8.0 * dx);
+                    double gy = -((c_pp + 2.0 * c_0p + c_mp) - (c_pm + 2.0 * c_0m + c_mm)) / (8.0 * dy);
+                    double g_mag = std::hypot(gx, gy);
+
+                    bool coherent = true;
+                    if (g_mag > 1.0e-3 / std::min(dx, dy)) {
+                        double dot_prod = (snx * gx + sny * gy) / g_mag;
+                        if (dot_prod < 0.3) {
+                            coherent = false;
+                        }
+                    }
+
+                    if (coherent) {
+                        double alpha = InterfaceReconstruction::compute_alpha(
+                            mesh.xv(i), mesh.xv(i + 1), mesh.yv(j), mesh.yv(j + 1), snx, sny, c);
+                        interface_segments[idx] = {snx, sny, alpha};
+                    }
                 }
             }
         }

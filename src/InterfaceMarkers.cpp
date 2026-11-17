@@ -436,24 +436,31 @@ void InterfaceMarkers::prune_and_reseed(const Mesh2D& mesh, const VofConfig& vof
         if (!mk.active) continue;
         int ci = mk.cell_i;
         int cj = mk.cell_j;
-        bool near_mixed = false;
-        for (int dj = -1; dj <= 1 && !near_mixed; ++dj) {
-            for (int di = -1; di <= 1; ++di) {
-                double c_nb = fields.C[mesh.cell_idx(ci + di, cj + dj)];
-                if (c_nb > 1.0e-5 && c_nb < 1.0 - 1.0e-5) {
-                    near_mixed = true;
-                    break;
+        if (ci < 1 || ci > nx || cj < 1 || cj > ny) {
+            mk.active = false;
+            continue;
+        }
+        double c_cell = fields.C[mesh.cell_idx(ci, cj)];
+        if (c_cell <= 0.01 || c_cell >= 1.0 - 0.01) {
+            bool near_mixed = false;
+            for (int dj = -1; dj <= 1 && !near_mixed; ++dj) {
+                for (int di = -1; di <= 1; ++di) {
+                    double c_nb = fields.C[mesh.cell_idx(ci + di, cj + dj)];
+                    if (c_nb > 0.01 && c_nb < 1.0 - 0.01) {
+                        near_mixed = true;
+                        break;
+                    }
                 }
             }
+            if (!near_mixed) {
+                mk.active = false;
+                continue;
+            }
         }
-        if (!near_mixed) {
-            mk.active = false;
-        } else {
-            cell_counts[mesh.cell_idx(ci, cj)]++;
-        }
+        cell_counts[mesh.cell_idx(ci, cj)]++;
     }
 
-    // 2. Fusion par sous-quadrants 2x2 dans les cellules surpeuplées (> max_per_cell)
+    // 2. Fusion par sous-quadrants 2x2 dans les cellules surpeuplées (> max_per_cell) avec projection PLIC
     for (int j = 1; j <= ny; ++j) {
         for (int i = 1; i <= nx; ++i) {
             if (cell_counts[mesh.cell_idx(i, j)] <= max_per_cell) continue;
@@ -482,11 +489,13 @@ void InterfaceMarkers::prune_and_reseed(const Mesh2D& mesh, const VofConfig& vof
             }
 
             cell_counts[mesh.cell_idx(i, j)] = 0;
+            double c_cell = fields.C[mesh.cell_idx(i, j)];
+
             for (int q = 0; q < 4; ++q) {
                 if (q_cnt[q] > 0) {
                     Marker mk;
-                    mk.x = q_x[q] / q_cnt[q];
-                    mk.y = q_y[q] / q_cnt[q];
+                    double mx = q_x[q] / q_cnt[q];
+                    double my = q_y[q] / q_cnt[q];
                     double nrm = std::hypot(q_nx[q], q_ny[q]);
                     if (nrm > 1.0e-12) {
                         mk.nx = q_nx[q] / nrm;
@@ -496,6 +505,30 @@ void InterfaceMarkers::prune_and_reseed(const Mesh2D& mesh, const VofConfig& vof
                         mk.ny = 1.0;
                     }
                     mk.kappa = q_kap[q] / q_cnt[q];
+
+                    // Projection géométrique orthogonale sur le segment PLIC pour éviter la dérive concave
+                    if (c_cell > 1.0e-4 && c_cell < 1.0 - 1.0e-4) {
+                        double xmin = mesh.xv(i), xmax = mesh.xv(i + 1);
+                        double ymin = mesh.yv(j), ymax = mesh.yv(j + 1);
+                        double snx = -mk.nx;
+                        double sny = -mk.ny;
+                        double alpha = InterfaceReconstruction::compute_alpha(xmin, xmax, ymin, ymax, snx, sny, c_cell);
+                        double x1 = 0.0, y1 = 0.0, x2 = 0.0, y2 = 0.0;
+                        if (InterfaceReconstruction::clip_segment_in_cell(xmin, xmax, ymin, ymax, snx, sny, alpha, x1, y1, x2, y2)) {
+                            double seg_dx = x2 - x1;
+                            double seg_dy = y2 - y1;
+                            double seg_len2 = seg_dx * seg_dx + seg_dy * seg_dy;
+                            if (seg_len2 > 1.0e-14) {
+                                double t_proj = ((mx - x1) * seg_dx + (my - y1) * seg_dy) / seg_len2;
+                                t_proj = std::clamp(t_proj, 0.05, 0.95);
+                                mx = x1 + t_proj * seg_dx;
+                                my = y1 + t_proj * seg_dy;
+                            }
+                        }
+                    }
+
+                    mk.x = mx;
+                    mk.y = my;
                     mk.cell_i = i;
                     mk.cell_j = j;
                     mk.active = true;
@@ -936,7 +969,7 @@ void InterfaceMarkers::compute_curvature_from_markers(const Mesh2D& mesh, const 
             fields.marker_nx[idx] = m_nx;
             fields.marker_ny[idx] = m_ny;
             fields.marker_kappa[idx] = kap_val;
-            if (c > 1.0e-5 && c < 1.0 - 1.0e-5) {
+            if (c > 0.01 && c < 1.0 - 0.01 && n_pts >= 3) {
                 fields.has_marker_normal[idx] = 1;
             }
             fields.has_marker_kappa[idx] = 1;
