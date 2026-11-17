@@ -134,6 +134,8 @@ struct InitialConditionConfig {
     double center_y = 0.5;   ///< Centre de la goutte en Y [m]
     // Déclaration de variable typée
     double radius   = 0.25;  ///< Rayon de la goutte [m]
+    double axis_a   = 0.0;   ///< Demi-axe X pour bulle/goutte elliptique (Lamb) [m]
+    double axis_b   = 0.0;   ///< Demi-axe Y pour bulle/goutte elliptique (Lamb) [m]
     // Déclaration de variable typée
     double box_x0   = 0.0;   ///< Coin inf-gauche du rectangle (Dam break)
     // Déclaration de variable typée

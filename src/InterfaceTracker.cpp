@@ -9,6 +9,15 @@ void InterfaceTracker::set_initial_condition(const Mesh2D& mesh, const InitialCo
     // Déclaration de variable typée
     double eps = 1.5 * std::max(mesh.dx, mesh.dy);
 
+    auto is_inside_body = [&](double px, double py) -> bool {
+        if (ic.axis_a > 0.0 && ic.axis_b > 0.0) {
+            double rx = (px - ic.center_x) / ic.axis_a;
+            double ry = (py - ic.center_y) / ic.axis_b;
+            return (rx * rx + ry * ry) <= 1.0;
+        }
+        return std::hypot(px - ic.center_x, py - ic.center_y) <= ic.radius;
+    };
+
     // Boucle spatiale sur les cellules locales selon l'axe vertical Y (ordonnées)
     for (int j = 0; j <= mesh.ny_local + 1; ++j) {
         // Déclaration de variable typée
@@ -26,29 +35,21 @@ void InterfaceTracker::set_initial_condition(const Mesh2D& mesh, const InitialCo
                 fields.C[idx] = 1.0;
             // Calcul et assignation numérique
             } else if (ic.type == InitialConditionType::DROPLET) {
-                if (vof_cfg.use_markers) {
+                if (vof_cfg.use_markers || (ic.axis_a > 0.0 && ic.axis_b > 0.0)) {
                     double x_min = mesh.xv(i);
                     double y_min = mesh.yv(j);
-                    double d_mid = std::hypot(x - ic.center_x, y - ic.center_y);
-                    double diag  = 0.5 * std::hypot(mesh.dx, mesh.dy);
-                    if (d_mid <= ic.radius - diag) {
-                        fields.C[idx] = 1.0;
-                    } else if (d_mid >= ic.radius + diag) {
-                        fields.C[idx] = 0.0;
-                    } else {
-                        int count_in = 0;
-                        const int N_SUB = 16;
-                        for (int sj = 0; sj < N_SUB; ++sj) {
-                            double ys = y_min + (sj + 0.5) * (mesh.dy / N_SUB);
-                            for (int si = 0; si < N_SUB; ++si) {
-                                double xs = x_min + (si + 0.5) * (mesh.dx / N_SUB);
-                                if (std::hypot(xs - ic.center_x, ys - ic.center_y) <= ic.radius) {
-                                    count_in++;
-                                }
+                    int count_in = 0;
+                    const int N_SUB = 16;
+                    for (int sj = 0; sj < N_SUB; ++sj) {
+                        double ys = y_min + (sj + 0.5) * (mesh.dy / N_SUB);
+                        for (int si = 0; si < N_SUB; ++si) {
+                            double xs = x_min + (si + 0.5) * (mesh.dx / N_SUB);
+                            if (is_inside_body(xs, ys)) {
+                                count_in++;
                             }
                         }
-                        fields.C[idx] = static_cast<double>(count_in) / (N_SUB * N_SUB);
                     }
+                    fields.C[idx] = static_cast<double>(count_in) / (N_SUB * N_SUB);
                 } else {
                     // Déclaration de variable typée
                     double dist = std::sqrt((x - ic.center_x) * (x - ic.center_x) +
@@ -67,57 +68,25 @@ void InterfaceTracker::set_initial_condition(const Mesh2D& mesh, const InitialCo
                 }
             // Calcul et assignation numérique
             } else if (ic.type == InitialConditionType::BUBBLE || ic.type == InitialConditionType::CYLINDER) {
-                // Déclaration de variable typée
-                double dist = std::sqrt((x - ic.center_x) * (x - ic.center_x) +
-                                        (y - ic.center_y) * (y - ic.center_y)) - ic.radius;
-                if (ic.type == InitialConditionType::CYLINDER || vof_cfg.reconstruction_method == "PLIC") {
-                    // Intégration géométrique nette par sous-échantillonnage 16x16 pour mailles coupées (Cas 3.1 Fluids 2021)
+                if (ic.type == InitialConditionType::CYLINDER || vof_cfg.reconstruction_method == "PLIC" ||
+                    (ic.axis_a > 0.0 && ic.axis_b > 0.0)) {
                     double x_min = mesh.xv(i);
-                    double x_max = mesh.xv(i + 1);
                     double y_min = mesh.yv(j);
-                    double y_max = mesh.yv(j + 1);
-
-                    double d00 = std::hypot(x_min - ic.center_x, y_min - ic.center_y);
-                    double d10 = std::hypot(x_max - ic.center_x, y_min - ic.center_y);
-                    double d01 = std::hypot(x_min - ic.center_x, y_max - ic.center_y);
-                    double d11 = std::hypot(x_max - ic.center_x, y_max - ic.center_y);
-
-                    if (d00 <= ic.radius && d10 <= ic.radius && d01 <= ic.radius && d11 <= ic.radius) {
-                        fields.C[idx] = 0.0; // Intérieur cylindre / bulle : fluide 2
-                    } else if (d00 >= ic.radius && d10 >= ic.radius && d01 >= ic.radius && d11 >= ic.radius) {
-                        double d_mid = std::hypot(x - ic.center_x, y - ic.center_y);
-                        double diag = 0.5 * std::hypot(mesh.dx, mesh.dy);
-                        if (d_mid > ic.radius + diag) {
-                            fields.C[idx] = 1.0; // Extérieur : fluide 1
-                        } else {
-                            int count_out = 0;
-                            const int N_SUB = 16;
-                            for (int sj = 0; sj < N_SUB; ++sj) {
-                                double ys = y_min + (sj + 0.5) * (mesh.dy / N_SUB);
-                                for (int si = 0; si < N_SUB; ++si) {
-                                    double xs = x_min + (si + 0.5) * (mesh.dx / N_SUB);
-                                    if (std::hypot(xs - ic.center_x, ys - ic.center_y) > ic.radius) {
-                                        count_out++;
-                                    }
-                                }
-                            }
-                            fields.C[idx] = static_cast<double>(count_out) / (N_SUB * N_SUB);
-                        }
-                    } else {
-                        int count_out = 0;
-                        const int N_SUB = 16;
-                        for (int sj = 0; sj < N_SUB; ++sj) {
-                            double ys = y_min + (sj + 0.5) * (mesh.dy / N_SUB);
-                            for (int si = 0; si < N_SUB; ++si) {
-                                double xs = x_min + (si + 0.5) * (mesh.dx / N_SUB);
-                                if (std::hypot(xs - ic.center_x, ys - ic.center_y) > ic.radius) {
-                                    count_out++;
-                                }
+                    int count_out = 0;
+                    const int N_SUB = 16;
+                    for (int sj = 0; sj < N_SUB; ++sj) {
+                        double ys = y_min + (sj + 0.5) * (mesh.dy / N_SUB);
+                        for (int si = 0; si < N_SUB; ++si) {
+                            double xs = x_min + (si + 0.5) * (mesh.dx / N_SUB);
+                            if (!is_inside_body(xs, ys)) {
+                                count_out++;
                             }
                         }
-                        fields.C[idx] = static_cast<double>(count_out) / (N_SUB * N_SUB);
                     }
+                    fields.C[idx] = static_cast<double>(count_out) / (N_SUB * N_SUB);
                 } else {
+                    double dist = std::sqrt((x - ic.center_x) * (x - ic.center_x) +
+                                            (y - ic.center_y) * (y - ic.center_y)) - ic.radius;
                     // Évaluation de la condition de contrôle diffuse standard
                     if (dist < -eps) {
                         fields.C[idx] = 0.0; // Intérieur bulle : fluide 2

@@ -36,7 +36,8 @@ void InterfaceMarkers::init_from_vof(const Mesh2D& mesh, const VofConfig& vof_cf
                            ic.type == InitialConditionType::BUBBLE ||
                            ic.type == InitialConditionType::CYLINDER ||
                            ic.type == InitialConditionType::VORTEX_SHEAR) &&
-                          (ic.radius > 0.0);
+                          (ic.radius > 0.0) &&
+                          (ic.axis_a <= 0.0 || ic.axis_b <= 0.0 || std::abs(ic.axis_a - ic.axis_b) < 1.0e-9);
 
     for (int j = 1; j <= ny; ++j) {
         for (int i = 1; i <= nx; ++i) {

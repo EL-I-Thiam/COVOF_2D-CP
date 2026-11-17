@@ -374,6 +374,13 @@ bool Config::load_from_json(const std::string& filepath) {
         init_cond.center_y = get_double(ic_block, "center_y", init_cond.center_y);
         // Calcul et assignation numérique
         init_cond.radius   = get_double(ic_block, "radius", init_cond.radius);
+        init_cond.axis_a   = get_double(ic_block, "axis_a", init_cond.axis_a);
+        init_cond.axis_b   = get_double(ic_block, "axis_b", init_cond.axis_b);
+        if (init_cond.axis_a <= 0.0 && init_cond.pert_amp > 0.0 && init_cond.radius > 0.0 &&
+            (init_cond.type == InitialConditionType::BUBBLE || init_cond.type == InitialConditionType::DROPLET)) {
+            init_cond.axis_a = init_cond.radius * (1.0 + init_cond.pert_amp);
+            init_cond.axis_b = init_cond.radius / (1.0 + init_cond.pert_amp);
+        }
         // Calcul et assignation numérique
         init_cond.box_x0   = get_double(ic_block, "box_x0", init_cond.box_x0);
         // Calcul et assignation numérique
