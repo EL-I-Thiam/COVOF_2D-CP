@@ -368,6 +368,8 @@ bool Config::load_from_json(const std::string& filepath) {
         // Branche par défaut
         else init_cond.type = InitialConditionType::SINGLE_PHASE;
 
+        init_cond.u        = get_double(ic_block, "u", init_cond.u);
+        init_cond.v        = get_double(ic_block, "v", init_cond.v);
         // Calcul et assignation numérique
         init_cond.center_x = get_double(ic_block, "center_x", init_cond.center_x);
         // Calcul et assignation numérique
@@ -376,6 +378,10 @@ bool Config::load_from_json(const std::string& filepath) {
         init_cond.radius   = get_double(ic_block, "radius", init_cond.radius);
         init_cond.axis_a   = get_double(ic_block, "axis_a", init_cond.axis_a);
         init_cond.axis_b   = get_double(ic_block, "axis_b", init_cond.axis_b);
+        double default_pert = (init_cond.type == InitialConditionType::RAYLEIGH_TAYLOR ||
+                               init_cond.type == InitialConditionType::SHEAR_LAYER) ? 0.01 : 0.0;
+        init_cond.pert_amp = get_double(ic_block, "pert_amp", default_pert);
+        init_cond.pert_k   = get_double(ic_block, "pert_k", init_cond.pert_k);
         if (init_cond.axis_a <= 0.0 && init_cond.pert_amp > 0.0 && init_cond.radius > 0.0 &&
             (init_cond.type == InitialConditionType::BUBBLE || init_cond.type == InitialConditionType::DROPLET)) {
             init_cond.axis_a = init_cond.radius * (1.0 + init_cond.pert_amp);
@@ -389,10 +395,6 @@ bool Config::load_from_json(const std::string& filepath) {
         init_cond.box_x1   = get_double(ic_block, "box_x1", init_cond.box_x1);
         // Calcul et assignation numérique
         init_cond.box_y1   = get_double(ic_block, "box_y1", init_cond.box_y1);
-        // Calcul et assignation numérique
-        init_cond.pert_amp = get_double(ic_block, "pert_amp", init_cond.pert_amp);
-        // Calcul et assignation numérique
-        init_cond.pert_k   = get_double(ic_block, "pert_k", init_cond.pert_k);
         // Calcul et assignation de l'épaisseur de nappe liquide
         init_cond.thickness = get_double(ic_block, "thickness", init_cond.thickness);
         // Calcul et assignation de la largeur du jet liquide

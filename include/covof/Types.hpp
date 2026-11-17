@@ -128,6 +128,8 @@ enum class InitialConditionType {
 struct InitialConditionConfig {
     // Calcul et assignation numérique
     InitialConditionType type = InitialConditionType::SINGLE_PHASE;
+    double u        = 0.0;   ///< Vitesse initiale uniforme X [m/s]
+    double v        = 0.0;   ///< Vitesse initiale uniforme Y [m/s]
     // Déclaration de variable typée
     double center_x = 0.5;   ///< Centre de la goutte en X [m]
     // Déclaration de variable typée
@@ -145,7 +147,7 @@ struct InitialConditionConfig {
     // Déclaration de variable typée
     double box_y1   = 1.0;
     // Déclaration de variable typée
-    double pert_amp = 0.01;  ///< Amplitude de perturbation (Rayleigh-Taylor)
+    double pert_amp = 0.0;   ///< Amplitude de perturbation (Rayleigh-Taylor / Lamb)
     // Déclaration de variable typée
     double pert_k   = 1.0;   ///< Nombre d'onde de perturbation
     // Déclaration de variable typée pour l'épaisseur de nappe liquide

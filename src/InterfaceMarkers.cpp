@@ -66,17 +66,22 @@ void InterfaceMarkers::init_from_vof(const Mesh2D& mesh, const VofConfig& vof_cf
                         double ry = yp - ic.center_y;
                         double r_dist = std::hypot(rx, ry);
                         if (r_dist > 1.0e-12 && std::abs(r_dist - ic.radius) <= 0.75 * std::hypot(mesh.dx, mesh.dy)) {
-                            xp = ic.center_x + ic.radius * (rx / r_dist);
-                            yp = ic.center_y + ic.radius * (ry / r_dist);
-                            if (xp < xmin - 1.0e-12 || xp > xmax + 1.0e-12 ||
-                                yp < ymin - 1.0e-12 || yp > ymax + 1.0e-12) {
-                                continue;
+                            double xp_proj = ic.center_x + ic.radius * (rx / r_dist);
+                            double yp_proj = ic.center_y + ic.radius * (ry / r_dist);
+                            if (xp_proj >= xmin - 1.0e-12 && xp_proj <= xmax + 1.0e-12 &&
+                                yp_proj >= ymin - 1.0e-12 && yp_proj <= ymax + 1.0e-12) {
+                                xp = std::clamp(xp_proj, xmin, xmax);
+                                yp = std::clamp(yp_proj, ymin, ymax);
+                                double sgn_c1 = (ic.type == InitialConditionType::DROPLET ||
+                                                 ic.type == InitialConditionType::VORTEX_SHEAR) ? -1.0 : 1.0;
+                                mk.nx = sgn_c1 * (rx / r_dist);
+                                mk.ny = sgn_c1 * (ry / r_dist);
+                                mk.kappa = -sgn_c1 / ic.radius;
+                            } else {
+                                mk.nx = -seg.nx;
+                                mk.ny = -seg.ny;
+                                mk.kappa = 0.0;
                             }
-                            double sgn_c1 = (ic.type == InitialConditionType::DROPLET ||
-                                             ic.type == InitialConditionType::VORTEX_SHEAR) ? -1.0 : 1.0;
-                            mk.nx = sgn_c1 * (rx / r_dist);
-                            mk.ny = sgn_c1 * (ry / r_dist);
-                            mk.kappa = -sgn_c1 / ic.radius;
                         } else {
                             mk.nx = -seg.nx;
                             mk.ny = -seg.ny;
@@ -117,6 +122,12 @@ void InterfaceMarkers::init_from_vof(const Mesh2D& mesh, const VofConfig& vof_cf
 
 void InterfaceMarkers::interpolate_velocity_cvi(const Mesh2D& mesh, const FlowFields& fields,
                                                 double xp, double yp, double& up, double& vp) const {
+    if (!std::isfinite(xp) || !std::isfinite(yp)) {
+        up = 0.0;
+        vp = 0.0;
+        return;
+    }
+
     int nx = mesh.nx_local;
     int ny = mesh.ny_local;
     double dx = mesh.dx;
@@ -175,6 +186,12 @@ void InterfaceMarkers::interpolate_velocity_cvi(const Mesh2D& mesh, const FlowFi
 
 void InterfaceMarkers::interpolate_velocity_bilinear(const Mesh2D& mesh, const FlowFields& fields,
                                                      double xp, double yp, double& up, double& vp) const {
+    if (!std::isfinite(xp) || !std::isfinite(yp)) {
+        up = 0.0;
+        vp = 0.0;
+        return;
+    }
+
     int nx = mesh.nx_local;
     int ny = mesh.ny_local;
     double dx = mesh.dx;
@@ -215,32 +232,261 @@ void InterfaceMarkers::interpolate_velocity_bilinear(const Mesh2D& mesh, const F
 
 void InterfaceMarkers::advect_rk2(const Mesh2D& mesh, const VofConfig& vof_cfg,
                                   const FlowFields& fields, double dt) {
-    if (!vof_cfg.use_markers || cloud.empty()) return;
+    DomainBC fallback_bc;
+    advect_rk2(mesh, vof_cfg, fallback_bc, fields, dt);
+}
+
+void InterfaceMarkers::advect_rk2(const Mesh2D& mesh, const VofConfig& vof_cfg,
+                                  const DomainBC& bc, const FlowFields& fields, double dt) {
+    if (!vof_cfg.use_markers) return;
 
     bool use_bilinear = (vof_cfg.marker_advection_scheme == "BILINEAR_RK2" ||
                          vof_cfg.marker_advection_scheme == "BILINEAR");
+    bool per_x = (bc.left.type == BCType::PERIODIC || bc.right.type == BCType::PERIODIC);
+    bool per_y = (bc.bottom.type == BCType::PERIODIC || bc.top.type == BCType::PERIODIC);
 
-    for (auto& mk : cloud) {
+    double x_min_loc = mesh.xu(1);
+    double x_max_loc = mesh.xu(mesh.nx_local + 1);
+    double y_min_loc = mesh.yv(1);
+    double y_max_loc = mesh.yv(mesh.ny_local + 1);
+    const double eps_b = 1.0e-12;
+
+    auto eval_vel = [&](double px, double py, double& ux, double& vy) {
+        if (use_bilinear) {
+            interpolate_velocity_bilinear(mesh, fields, px, py, ux, vy);
+        } else {
+            interpolate_velocity_cvi(mesh, fields, px, py, ux, vy);
+        }
+        if (!std::isfinite(ux) || !std::isfinite(vy)) {
+            ux = 0.0;
+            vy = 0.0;
+        }
+    };
+
+    struct RemoteQuery {
+        size_t cloud_idx;
+        double x0, y0, u1, v1, x_star, y_star;
+    };
+    struct PassItem {
+        int q_id;
+        int dir_x;
+        int dir_y;
+        double x, y, u2, v2;
+    };
+
+    std::vector<RemoteQuery> remote_queries;
+    std::vector<PassItem> mid_items;
+
+    for (size_t idx_m = 0; idx_m < cloud.size(); ++idx_m) {
+        auto& mk = cloud[idx_m];
         if (!mk.active) continue;
         double x0 = mk.x;
         double y0 = mk.y;
         double u1 = 0.0, v1 = 0.0;
-        double u2 = 0.0, v2 = 0.0;
+        eval_vel(x0, y0, u1, v1);
 
-        if (use_bilinear) {
-            interpolate_velocity_bilinear(mesh, fields, x0, y0, u1, v1);
-            double x_star = x0 + dt * u1;
-            double y_star = y0 + dt * v1;
-            interpolate_velocity_bilinear(mesh, fields, x_star, y_star, u2, v2);
-        } else {
-            interpolate_velocity_cvi(mesh, fields, x0, y0, u1, v1);
-            double x_star = x0 + dt * u1;
-            double y_star = y0 + dt * v1;
-            interpolate_velocity_cvi(mesh, fields, x_star, y_star, u2, v2);
+        double x_star = x0 + dt * u1;
+        double y_star = y0 + dt * v1;
+
+        if (per_x && mesh.dims[0] == 1) {
+            x_star = x_star - mesh.lx * std::floor(x_star / mesh.lx);
+            if (x_star >= mesh.lx) x_star = 0.0;
+        } else if (!per_x) {
+            if (mesh.is_boundary_left  && x_star < 0.0)      x_star = eps_b * mesh.dx;
+            if (mesh.is_boundary_right && x_star >= mesh.lx) x_star = mesh.lx - eps_b * mesh.dx;
         }
 
-        mk.x = x0 + 0.5 * dt * (u1 + u2);
-        mk.y = y0 + 0.5 * dt * (v1 + v2);
+        if (per_y && mesh.dims[1] == 1) {
+            y_star = y_star - mesh.ly * std::floor(y_star / mesh.ly);
+            if (y_star >= mesh.ly) y_star = 0.0;
+        } else if (!per_y) {
+            if (mesh.is_boundary_bottom && y_star < 0.0)      y_star = eps_b * mesh.dy;
+            if (mesh.is_boundary_top    && y_star >= mesh.ly) y_star = mesh.ly - eps_b * mesh.dy;
+        }
+
+        bool out_x = (mesh.dims[0] > 1) && ((x_star < x_min_loc && mesh.rank_left != MPI_PROC_NULL) ||
+                                            (x_star >= x_max_loc && mesh.rank_right != MPI_PROC_NULL));
+        bool out_y = (mesh.dims[1] > 1) && ((y_star < y_min_loc && mesh.rank_bottom != MPI_PROC_NULL) ||
+                                            (y_star >= y_max_loc && mesh.rank_top != MPI_PROC_NULL));
+
+        if (mesh.num_procs == 1 || (!out_x && !out_y)) {
+            double u2 = 0.0, v2 = 0.0;
+            eval_vel(x_star, y_star, u2, v2);
+            mk.x = x0 + 0.5 * dt * (u1 + u2);
+            mk.y = y0 + 0.5 * dt * (v1 + v2);
+        } else {
+            int q_id = static_cast<int>(remote_queries.size());
+            remote_queries.push_back({idx_m, x0, y0, u1, v1, x_star, y_star});
+            mid_items.push_back({q_id, 0, 0, x_star, y_star, 0.0, 0.0});
+        }
+    }
+
+    if (mesh.num_procs > 1) {
+        // --- PASSE X ALLER ---
+        std::vector<double> send_L, send_R;
+        std::vector<PassItem> stay_x;
+        if (mesh.dims[0] > 1) {
+            for (const auto& it : mid_items) {
+                if (it.x < x_min_loc && mesh.rank_left != MPI_PROC_NULL) {
+                    double xs = it.x + ((per_x && mesh.coords[0] == 0) ? mesh.lx : 0.0);
+                    send_L.insert(send_L.end(), {static_cast<double>(it.q_id), xs, it.y});
+                } else if (it.x >= x_max_loc && mesh.rank_right != MPI_PROC_NULL) {
+                    double xs = it.x - ((per_x && mesh.coords[0] == mesh.dims[0] - 1) ? mesh.lx : 0.0);
+                    send_R.insert(send_R.end(), {static_cast<double>(it.q_id), xs, it.y});
+                } else {
+                    stay_x.push_back(it);
+                }
+            }
+
+            int n_sL = static_cast<int>(send_L.size() / 3), n_sR = static_cast<int>(send_R.size() / 3);
+            int n_rL = 0, n_rR = 0;
+            MPI_Sendrecv(&n_sL, 1, MPI_INT, mesh.rank_left,  601, &n_rR, 1, MPI_INT, mesh.rank_right, 601, mesh.comm, MPI_STATUS_IGNORE);
+            MPI_Sendrecv(&n_sR, 1, MPI_INT, mesh.rank_right, 602, &n_rL, 1, MPI_INT, mesh.rank_left,  602, mesh.comm, MPI_STATUS_IGNORE);
+            std::vector<double> recv_L(static_cast<size_t>(std::max(1, 3 * n_rL)), 0.0);
+            std::vector<double> recv_R(static_cast<size_t>(std::max(1, 3 * n_rR)), 0.0);
+            if (send_L.empty()) send_L.push_back(0.0);
+            if (send_R.empty()) send_R.push_back(0.0);
+            MPI_Sendrecv(send_L.data(), 3 * n_sL, MPI_DOUBLE, mesh.rank_left,  603, recv_R.data(), 3 * n_rR, MPI_DOUBLE, mesh.rank_right, 603, mesh.comm, MPI_STATUS_IGNORE);
+            MPI_Sendrecv(send_R.data(), 3 * n_sR, MPI_DOUBLE, mesh.rank_right, 604, recv_L.data(), 3 * n_rL, MPI_DOUBLE, mesh.rank_left,  604, mesh.comm, MPI_STATUS_IGNORE);
+
+            for (int k = 0; k < n_rR; ++k) {
+                stay_x.push_back({static_cast<int>(std::llround(recv_R[3 * k])), -1, 0, recv_R[3 * k + 1], recv_R[3 * k + 2], 0.0, 0.0});
+            }
+            for (int k = 0; k < n_rL; ++k) {
+                stay_x.push_back({static_cast<int>(std::llround(recv_L[3 * k])), +1, 0, recv_L[3 * k + 1], recv_L[3 * k + 2], 0.0, 0.0});
+            }
+        } else {
+            stay_x = std::move(mid_items);
+        }
+
+        // --- PASSE Y ALLER ---
+        std::vector<PassItem> eval_items;
+        if (mesh.dims[1] > 1) {
+            std::vector<double> send_B, send_T;
+            for (const auto& it : stay_x) {
+                if (it.y < y_min_loc && mesh.rank_bottom != MPI_PROC_NULL) {
+                    double ys = it.y + ((per_y && mesh.coords[1] == 0) ? mesh.ly : 0.0);
+                    send_B.insert(send_B.end(), {static_cast<double>(it.q_id), static_cast<double>(it.dir_x), it.x, ys});
+                } else if (it.y >= y_max_loc && mesh.rank_top != MPI_PROC_NULL) {
+                    double ys = it.y - ((per_y && mesh.coords[1] == mesh.dims[1] - 1) ? mesh.ly : 0.0);
+                    send_T.insert(send_T.end(), {static_cast<double>(it.q_id), static_cast<double>(it.dir_x), it.x, ys});
+                } else {
+                    eval_items.push_back(it);
+                }
+            }
+
+            int n_sB = static_cast<int>(send_B.size() / 4), n_sT = static_cast<int>(send_T.size() / 4);
+            int n_rB = 0, n_rT = 0;
+            MPI_Sendrecv(&n_sB, 1, MPI_INT, mesh.rank_bottom, 605, &n_rT, 1, MPI_INT, mesh.rank_top,    605, mesh.comm, MPI_STATUS_IGNORE);
+            MPI_Sendrecv(&n_sT, 1, MPI_INT, mesh.rank_top,    606, &n_rB, 1, MPI_INT, mesh.rank_bottom, 606, mesh.comm, MPI_STATUS_IGNORE);
+            std::vector<double> recv_B(static_cast<size_t>(std::max(1, 4 * n_rB)), 0.0);
+            std::vector<double> recv_T(static_cast<size_t>(std::max(1, 4 * n_rT)), 0.0);
+            if (send_B.empty()) send_B.push_back(0.0);
+            if (send_T.empty()) send_T.push_back(0.0);
+            MPI_Sendrecv(send_B.data(), 4 * n_sB, MPI_DOUBLE, mesh.rank_bottom, 607, recv_T.data(), 4 * n_rT, MPI_DOUBLE, mesh.rank_top,    607, mesh.comm, MPI_STATUS_IGNORE);
+            MPI_Sendrecv(send_T.data(), 4 * n_sT, MPI_DOUBLE, mesh.rank_top,    608, recv_B.data(), 4 * n_rB, MPI_DOUBLE, mesh.rank_bottom, 608, mesh.comm, MPI_STATUS_IGNORE);
+
+            for (int k = 0; k < n_rT; ++k) {
+                eval_items.push_back({static_cast<int>(std::llround(recv_T[4 * k])),
+                                      static_cast<int>(std::llround(recv_T[4 * k + 1])), -1,
+                                      recv_T[4 * k + 2], recv_T[4 * k + 3], 0.0, 0.0});
+            }
+            for (int k = 0; k < n_rB; ++k) {
+                eval_items.push_back({static_cast<int>(std::llround(recv_B[4 * k])),
+                                      static_cast<int>(std::llround(recv_B[4 * k + 1])), +1,
+                                      recv_B[4 * k + 2], recv_B[4 * k + 3], 0.0, 0.0});
+            }
+        } else {
+            eval_items = std::move(stay_x);
+        }
+
+        // --- ÉVALUATION (u2, v2) SUR LE RANG PROPRIÉTAIRE ---
+        for (auto& it : eval_items) {
+            eval_vel(it.x, it.y, it.u2, it.v2);
+        }
+
+        // --- PASSE Y RETOUR ---
+        std::vector<PassItem> mid_replies;
+        if (mesh.dims[1] > 1) {
+            std::vector<double> rsend_B, rsend_T;
+            for (const auto& it : eval_items) {
+                if (it.dir_y == +1) {
+                    rsend_B.insert(rsend_B.end(), {static_cast<double>(it.q_id), static_cast<double>(it.dir_x), it.u2, it.v2});
+                } else if (it.dir_y == -1) {
+                    rsend_T.insert(rsend_T.end(), {static_cast<double>(it.q_id), static_cast<double>(it.dir_x), it.u2, it.v2});
+                } else {
+                    mid_replies.push_back(it);
+                }
+            }
+            int n_sB = static_cast<int>(rsend_B.size() / 4), n_sT = static_cast<int>(rsend_T.size() / 4);
+            int n_rB = 0, n_rT = 0;
+            MPI_Sendrecv(&n_sB, 1, MPI_INT, mesh.rank_bottom, 615, &n_rT, 1, MPI_INT, mesh.rank_top,    615, mesh.comm, MPI_STATUS_IGNORE);
+            MPI_Sendrecv(&n_sT, 1, MPI_INT, mesh.rank_top,    616, &n_rB, 1, MPI_INT, mesh.rank_bottom, 616, mesh.comm, MPI_STATUS_IGNORE);
+            std::vector<double> rrecv_B(static_cast<size_t>(std::max(1, 4 * n_rB)), 0.0);
+            std::vector<double> rrecv_T(static_cast<size_t>(std::max(1, 4 * n_rT)), 0.0);
+            if (rsend_B.empty()) rsend_B.push_back(0.0);
+            if (rsend_T.empty()) rsend_T.push_back(0.0);
+            MPI_Sendrecv(rsend_B.data(), 4 * n_sB, MPI_DOUBLE, mesh.rank_bottom, 617, rrecv_T.data(), 4 * n_rT, MPI_DOUBLE, mesh.rank_top,    617, mesh.comm, MPI_STATUS_IGNORE);
+            MPI_Sendrecv(rsend_T.data(), 4 * n_sT, MPI_DOUBLE, mesh.rank_top,    618, rrecv_B.data(), 4 * n_rB, MPI_DOUBLE, mesh.rank_bottom, 618, mesh.comm, MPI_STATUS_IGNORE);
+
+            for (int k = 0; k < n_rT; ++k) {
+                mid_replies.push_back({static_cast<int>(std::llround(rrecv_T[4 * k])),
+                                       static_cast<int>(std::llround(rrecv_T[4 * k + 1])), 0,
+                                       0.0, 0.0, rrecv_T[4 * k + 2], rrecv_T[4 * k + 3]});
+            }
+            for (int k = 0; k < n_rB; ++k) {
+                mid_replies.push_back({static_cast<int>(std::llround(rrecv_B[4 * k])),
+                                       static_cast<int>(std::llround(rrecv_B[4 * k + 1])), 0,
+                                       0.0, 0.0, rrecv_B[4 * k + 2], rrecv_B[4 * k + 3]});
+            }
+        } else {
+            mid_replies = std::move(eval_items);
+        }
+
+        // --- PASSE X RETOUR ---
+        std::vector<PassItem> final_replies;
+        if (mesh.dims[0] > 1) {
+            std::vector<double> rsend_L, rsend_R;
+            for (const auto& it : mid_replies) {
+                if (it.dir_x == +1) {
+                    rsend_L.insert(rsend_L.end(), {static_cast<double>(it.q_id), it.u2, it.v2});
+                } else if (it.dir_x == -1) {
+                    rsend_R.insert(rsend_R.end(), {static_cast<double>(it.q_id), it.u2, it.v2});
+                } else {
+                    final_replies.push_back(it);
+                }
+            }
+            int n_sL = static_cast<int>(rsend_L.size() / 3), n_sR = static_cast<int>(rsend_R.size() / 3);
+            int n_rL = 0, n_rR = 0;
+            MPI_Sendrecv(&n_sL, 1, MPI_INT, mesh.rank_left,  611, &n_rR, 1, MPI_INT, mesh.rank_right, 611, mesh.comm, MPI_STATUS_IGNORE);
+            MPI_Sendrecv(&n_sR, 1, MPI_INT, mesh.rank_right, 612, &n_rL, 1, MPI_INT, mesh.rank_left,  612, mesh.comm, MPI_STATUS_IGNORE);
+            std::vector<double> rrecv_L(static_cast<size_t>(std::max(1, 3 * n_rL)), 0.0);
+            std::vector<double> rrecv_R(static_cast<size_t>(std::max(1, 3 * n_rR)), 0.0);
+            if (rsend_L.empty()) rsend_L.push_back(0.0);
+            if (rsend_R.empty()) rsend_R.push_back(0.0);
+            MPI_Sendrecv(rsend_L.data(), 3 * n_sL, MPI_DOUBLE, mesh.rank_left,  613, rrecv_R.data(), 3 * n_rR, MPI_DOUBLE, mesh.rank_right, 613, mesh.comm, MPI_STATUS_IGNORE);
+            MPI_Sendrecv(rsend_R.data(), 3 * n_sR, MPI_DOUBLE, mesh.rank_right, 614, rrecv_L.data(), 3 * n_rL, MPI_DOUBLE, mesh.rank_left,  614, mesh.comm, MPI_STATUS_IGNORE);
+
+            for (int k = 0; k < n_rR; ++k) {
+                final_replies.push_back({static_cast<int>(std::llround(rrecv_R[3 * k])), 0, 0,
+                                         0.0, 0.0, rrecv_R[3 * k + 1], rrecv_R[3 * k + 2]});
+            }
+            for (int k = 0; k < n_rL; ++k) {
+                final_replies.push_back({static_cast<int>(std::llround(rrecv_L[3 * k])), 0, 0,
+                                         0.0, 0.0, rrecv_L[3 * k + 1], rrecv_L[3 * k + 2]});
+            }
+        } else {
+            final_replies = std::move(mid_replies);
+        }
+
+        for (const auto& rep : final_replies) {
+            if (rep.q_id >= 0 && rep.q_id < static_cast<int>(remote_queries.size())) {
+                const auto& rq = remote_queries[rep.q_id];
+                auto& mk = cloud[rq.cloud_idx];
+                mk.x = rq.x0 + 0.5 * dt * (rq.u1 + rep.u2);
+                mk.y = rq.y0 + 0.5 * dt * (rq.v1 + rep.v2);
+            }
+        }
     }
 }
 
@@ -265,26 +511,30 @@ void InterfaceMarkers::migrate_mpi(const Mesh2D& mesh, const VofConfig& vof_cfg,
     bool per_y = (bc.bottom.type == BCType::PERIODIC || bc.top.type == BCType::PERIODIC);
     const double eps_b = 1.0e-12;
 
-    // Repliement périodique global ou réflexion sur parois physiques
+    // Bornage sur parois physiques non-périodiques, et repliement local uniquement si dims[d] == 1
     for (auto& mk : cloud) {
         if (!mk.active) continue;
         if (per_x) {
-            if (mk.x < 0.0)      mk.x += mesh.lx;
-            if (mk.x >= mesh.lx) mk.x -= mesh.lx;
+            if (mesh.dims[0] == 1) {
+                mk.x = mk.x - mesh.lx * std::floor(mk.x / mesh.lx);
+                if (mk.x >= mesh.lx) mk.x = 0.0;
+            }
         } else {
             if (mesh.is_boundary_left  && mk.x < 0.0)      mk.x = eps_b * dx;
             if (mesh.is_boundary_right && mk.x >= mesh.lx) mk.x = mesh.lx - eps_b * dx;
         }
         if (per_y) {
-            if (mk.y < 0.0)      mk.y += mesh.ly;
-            if (mk.y >= mesh.ly) mk.y -= mesh.ly;
+            if (mesh.dims[1] == 1) {
+                mk.y = mk.y - mesh.ly * std::floor(mk.y / mesh.ly);
+                if (mk.y >= mesh.ly) mk.y = 0.0;
+            }
         } else {
             if (mesh.is_boundary_bottom && mk.y < 0.0)      mk.y = eps_b * dy;
             if (mesh.is_boundary_top    && mk.y >= mesh.ly) mk.y = mesh.ly - eps_b * dy;
         }
     }
 
-    if (mesh.num_procs > 1) {
+    if (mesh.dims[0] > 1) {
         // --- PASSE 1 : ÉCHANGE SELON X (GAUCHE / DROITE) ---
         std::vector<double> send_L, send_R;
         std::vector<Marker> stay_x;
@@ -293,9 +543,11 @@ void InterfaceMarkers::migrate_mpi(const Mesh2D& mesh, const VofConfig& vof_cfg,
         for (auto& mk : cloud) {
             if (!mk.active) continue;
             if (mk.x < x_min_loc && mesh.rank_left != MPI_PROC_NULL) {
-                send_L.insert(send_L.end(), {mk.x, mk.y, mk.nx, mk.ny, mk.kappa});
+                double xs = mk.x + ((per_x && mesh.coords[0] == 0) ? mesh.lx : 0.0);
+                send_L.insert(send_L.end(), {xs, mk.y, mk.nx, mk.ny, mk.kappa});
             } else if (mk.x >= x_max_loc && mesh.rank_right != MPI_PROC_NULL) {
-                send_R.insert(send_R.end(), {mk.x, mk.y, mk.nx, mk.ny, mk.kappa});
+                double xs = mk.x - ((per_x && mesh.coords[0] == mesh.dims[0] - 1) ? mesh.lx : 0.0);
+                send_R.insert(send_R.end(), {xs, mk.y, mk.nx, mk.ny, mk.kappa});
             } else {
                 stay_x.push_back(mk);
             }
@@ -344,20 +596,25 @@ void InterfaceMarkers::migrate_mpi(const Mesh2D& mesh, const VofConfig& vof_cfg,
             mk.active = true;
             stay_x.push_back(mk);
         }
+        cloud = std::move(stay_x);
+    }
 
+    if (mesh.dims[1] > 1) {
         // --- PASSE 2 : ÉCHANGE SELON Y (BAS / HAUT) ---
         std::vector<double> send_B, send_T;
-        cloud.clear();
-        cloud.reserve(stay_x.size());
+        std::vector<Marker> stay_y;
+        stay_y.reserve(cloud.size());
 
-        for (auto& mk : stay_x) {
+        for (auto& mk : cloud) {
             if (!mk.active) continue;
             if (mk.y < y_min_loc && mesh.rank_bottom != MPI_PROC_NULL) {
-                send_B.insert(send_B.end(), {mk.x, mk.y, mk.nx, mk.ny, mk.kappa});
+                double ys = mk.y + ((per_y && mesh.coords[1] == 0) ? mesh.ly : 0.0);
+                send_B.insert(send_B.end(), {mk.x, ys, mk.nx, mk.ny, mk.kappa});
             } else if (mk.y >= y_max_loc && mesh.rank_top != MPI_PROC_NULL) {
-                send_T.insert(send_T.end(), {mk.x, mk.y, mk.nx, mk.ny, mk.kappa});
+                double ys = mk.y - ((per_y && mesh.coords[1] == mesh.dims[1] - 1) ? mesh.ly : 0.0);
+                send_T.insert(send_T.end(), {mk.x, ys, mk.nx, mk.ny, mk.kappa});
             } else {
-                cloud.push_back(mk);
+                stay_y.push_back(mk);
             }
         }
 
@@ -392,7 +649,7 @@ void InterfaceMarkers::migrate_mpi(const Mesh2D& mesh, const VofConfig& vof_cfg,
             mk.ny = recv_B[5 * k + 3];
             mk.kappa = recv_B[5 * k + 4];
             mk.active = true;
-            cloud.push_back(mk);
+            stay_y.push_back(mk);
         }
         for (int k = 0; k < n_recv_T; ++k) {
             Marker mk;
@@ -402,8 +659,9 @@ void InterfaceMarkers::migrate_mpi(const Mesh2D& mesh, const VofConfig& vof_cfg,
             mk.ny = recv_T[5 * k + 3];
             mk.kappa = recv_T[5 * k + 4];
             mk.active = true;
-            cloud.push_back(mk);
+            stay_y.push_back(mk);
         }
+        cloud = std::move(stay_y);
     }
 
     // Mise à jour des indices de cellule locale (cell_i, cell_j)
@@ -421,7 +679,7 @@ void InterfaceMarkers::migrate_mpi(const Mesh2D& mesh, const VofConfig& vof_cfg,
 // =============================================================================
 
 void InterfaceMarkers::prune_and_reseed(const Mesh2D& mesh, const VofConfig& vof_cfg,
-                                        const DomainBC& /*bc*/, FlowFields& fields) {
+                                        const DomainBC& bc, FlowFields& fields) {
     if (!vof_cfg.use_markers) return;
 
     int nx = mesh.nx_local;
@@ -448,7 +706,7 @@ void InterfaceMarkers::prune_and_reseed(const Mesh2D& mesh, const VofConfig& vof
                 for (int di = -1; di <= 1; ++di) {
                     if (di == 0 && dj == 0) continue;
                     double c_nb = fields.C[mesh.cell_idx(ci + di, cj + dj)];
-                    if (c_nb > 0.05 && c_nb < 1.0 - 0.05) {
+                    if (c_nb > 0.02 && c_nb < 1.0 - 0.02) {
                         near_mixed = true;
                         break;
                     }
@@ -462,90 +720,95 @@ void InterfaceMarkers::prune_and_reseed(const Mesh2D& mesh, const VofConfig& vof
         cell_counts[mesh.cell_idx(ci, cj)]++;
     }
 
-    // 2. Fusion par sous-quadrants 2x2 dans les cellules surpeuplées (> max_per_cell) avec projection PLIC
+    // 2. Fusion lagrangienne par sous-quadrants 2x2 avec séparation de normales opposées (films minces)
     for (int j = 1; j <= ny; ++j) {
+        double ymin = mesh.yv(j), ymax = mesh.yv(j + 1);
+        double yc_mid = mesh.yc(j);
         for (int i = 1; i <= nx; ++i) {
             if (cell_counts[mesh.cell_idx(i, j)] <= max_per_cell) continue;
 
+            double xmin = mesh.xv(i), xmax = mesh.xv(i + 1);
             double xc_mid = mesh.xc(i);
-            double yc_mid = mesh.yc(j);
-            double q_x[4] = {0.0, 0.0, 0.0, 0.0};
-            double q_y[4] = {0.0, 0.0, 0.0, 0.0};
-            double q_nx[4] = {0.0, 0.0, 0.0, 0.0};
-            double q_ny[4] = {0.0, 0.0, 0.0, 0.0};
-            double q_kap[4] = {0.0, 0.0, 0.0, 0.0};
-            int q_cnt[4] = {0, 0, 0, 0};
+            double q_x[4][2] = {{0.0}}, q_y[4][2] = {{0.0}};
+            double q_nx[4][2] = {{0.0}}, q_ny[4][2] = {{0.0}};
+            double q_kap[4][2] = {{0.0}};
+            double ref_nx[4] = {0.0}, ref_ny[4] = {0.0};
+            int q_cnt[4][2] = {{0}};
 
             for (auto& mk : cloud) {
                 if (!mk.active) continue;
                 if (mk.cell_i == i && mk.cell_j == j) {
                     int q = ((mk.x >= xc_mid) ? 1 : 0) + ((mk.y >= yc_mid) ? 2 : 0);
-                    q_x[q] += mk.x;
-                    q_y[q] += mk.y;
-                    q_nx[q] += mk.nx;
-                    q_ny[q] += mk.ny;
-                    q_kap[q] += mk.kappa;
-                    q_cnt[q]++;
+                    int s = 0;
+                    if (q_cnt[q][0] == 0) {
+                        ref_nx[q] = mk.nx;
+                        ref_ny[q] = mk.ny;
+                    } else if (mk.nx * ref_nx[q] + mk.ny * ref_ny[q] < 0.0) {
+                        s = 1;
+                    }
+                    q_x[q][s]   += mk.x;
+                    q_y[q][s]   += mk.y;
+                    q_nx[q][s]  += mk.nx;
+                    q_ny[q][s]  += mk.ny;
+                    q_kap[q][s] += mk.kappa;
+                    q_cnt[q][s]++;
                     mk.active = false;
                 }
             }
 
             cell_counts[mesh.cell_idx(i, j)] = 0;
-            double c_cell = fields.C[mesh.cell_idx(i, j)];
-
             for (int q = 0; q < 4; ++q) {
-                if (q_cnt[q] > 0) {
-                    Marker mk;
-                    double mx = q_x[q] / q_cnt[q];
-                    double my = q_y[q] / q_cnt[q];
-                    double nrm = std::hypot(q_nx[q], q_ny[q]);
-                    if (nrm > 1.0e-12) {
-                        mk.nx = q_nx[q] / nrm;
-                        mk.ny = q_ny[q] / nrm;
-                    } else {
-                        mk.nx = 0.0;
-                        mk.ny = 1.0;
-                    }
-                    mk.kappa = q_kap[q] / q_cnt[q];
-
-                    // Projection géométrique orthogonale sur le segment PLIC pour éviter la dérive concave
-                    if (c_cell > 1.0e-4 && c_cell < 1.0 - 1.0e-4) {
-                        double xmin = mesh.xv(i), xmax = mesh.xv(i + 1);
-                        double ymin = mesh.yv(j), ymax = mesh.yv(j + 1);
-                        double snx = -mk.nx;
-                        double sny = -mk.ny;
-                        double alpha = InterfaceReconstruction::compute_alpha(xmin, xmax, ymin, ymax, snx, sny, c_cell);
-                        double x1 = 0.0, y1 = 0.0, x2 = 0.0, y2 = 0.0;
-                        if (InterfaceReconstruction::clip_segment_in_cell(xmin, xmax, ymin, ymax, snx, sny, alpha, x1, y1, x2, y2)) {
-                            double seg_dx = x2 - x1;
-                            double seg_dy = y2 - y1;
-                            double seg_len2 = seg_dx * seg_dx + seg_dy * seg_dy;
-                            if (seg_len2 > 1.0e-14) {
-                                double t_proj = ((mx - x1) * seg_dx + (my - y1) * seg_dy) / seg_len2;
-                                t_proj = std::clamp(t_proj, 0.05, 0.95);
-                                mx = x1 + t_proj * seg_dx;
-                                my = y1 + t_proj * seg_dy;
-                            }
+                for (int s = 0; s < 2; ++s) {
+                    if (q_cnt[q][s] > 0) {
+                        Marker mk;
+                        mk.x = std::clamp(q_x[q][s] / q_cnt[q][s], xmin, xmax);
+                        mk.y = std::clamp(q_y[q][s] / q_cnt[q][s], ymin, ymax);
+                        double nrm = std::hypot(q_nx[q][s], q_ny[q][s]);
+                        if (nrm > 1.0e-12) {
+                            mk.nx = q_nx[q][s] / nrm;
+                            mk.ny = q_ny[q][s] / nrm;
+                        } else {
+                            mk.nx = 0.0;
+                            mk.ny = 1.0;
                         }
+                        mk.kappa = q_kap[q][s] / q_cnt[q][s];
+                        mk.cell_i = i;
+                        mk.cell_j = j;
+                        mk.active = true;
+                        cloud.push_back(mk);
+                        cell_counts[mesh.cell_idx(i, j)]++;
                     }
-
-                    mk.x = mx;
-                    mk.y = my;
-                    mk.cell_i = i;
-                    mk.cell_j = j;
-                    mk.active = true;
-                    cloud.push_back(mk);
-                    cell_counts[mesh.cell_idx(i, j)]++;
                 }
             }
         }
     }
+
+    // Synchronisation MPI / périodique du nombre de marqueurs et de la normale moyenne locale par cellule
+    std::vector<double> cnt_halo((nx + 2) * (ny + 2), 0.0);
+    std::vector<double> nrm_x_halo((nx + 2) * (ny + 2), 0.0);
+    std::vector<double> nrm_y_halo((nx + 2) * (ny + 2), 0.0);
+    for (int j = 1; j <= ny; ++j) {
+        for (int i = 1; i <= nx; ++i) {
+            cnt_halo[mesh.cell_idx(i, j)] = static_cast<double>(cell_counts[mesh.cell_idx(i, j)]);
+        }
+    }
+    for (const auto& mk : cloud) {
+        if (!mk.active) continue;
+        int idx = mesh.cell_idx(mk.cell_i, mk.cell_j);
+        nrm_x_halo[idx] += mk.nx;
+        nrm_y_halo[idx] += mk.ny;
+    }
+    MpiComm::sync_cell_scalar(mesh, cnt_halo);
+    MpiComm::sync_cell_scalar(mesh, nrm_x_halo);
+    MpiComm::sync_cell_scalar(mesh, nrm_y_halo);
 
     // 3. Ré-ensemencement local avec FILTRAGE GÉOMÉTRIQUE STRICT :
     //    Interdire l'injection de marqueurs dès que la cellule ne possède pas une normale PLIC univoque
     //    cohérente avec le front principal, pour empêcher toute apparition de marqueurs orphelins.
     double h = std::max(dx, dy);
     double min_grad = 0.25 / h; // Gradient franc obligatoire (interdit dans les queues de diffusion)
+    double xc_jet = (bc.top.jet_center > 0.0) ? bc.top.jet_center : 0.5 * mesh.lx;
+    double half_w_jet = (bc.top.jet_width > 0.0) ? 0.5 * bc.top.jet_width : 0.04;
 
     for (int j = 1; j <= ny; ++j) {
         for (int i = 1; i <= nx; ++i) {
@@ -555,16 +818,18 @@ void InterfaceMarkers::prune_and_reseed(const Mesh2D& mesh, const VofConfig& vof
             // Condition 3.1 : Cellule mixte franche (seuil resserré 0.05 < C < 0.95) dépourvue de marqueurs
             if (c <= 0.05 || c >= 0.95 || cell_counts[idx] > 0) continue;
 
-            // Condition 3.2 : Continuité avec le front principal existant
-            // Une cellule ne peut être ré-ensemencée que si elle est contiguë à des marqueurs actifs existants
-            bool has_marker_neighbor = false;
+            bool on_jet_nozzle = (bc.top.profile == "JET_INLET" && mesh.is_boundary_top && j == ny &&
+                                  std::abs(mesh.xc(i) - xc_jet) <= half_w_jet + dx);
+
+            // Condition 3.2 : Continuité avec le front principal existant (ou l'injecteur actif)
+            bool has_marker_neighbor = on_jet_nozzle;
             double c_min_nb = 1.0;
             double c_max_nb = 0.0;
             for (int dj = -1; dj <= 1; ++dj) {
                 for (int di = -1; di <= 1; ++di) {
                     if (di == 0 && dj == 0) continue;
                     int nb_idx = mesh.cell_idx(i + di, j + dj);
-                    if (cell_counts[nb_idx] > 0) has_marker_neighbor = true;
+                    if (cnt_halo[nb_idx] > 0.5) has_marker_neighbor = true;
                     double c_nb = fields.C[nb_idx];
                     if (c_nb < c_min_nb) c_min_nb = c_nb;
                     if (c_nb > c_max_nb) c_max_nb = c_nb;
@@ -594,17 +859,34 @@ void InterfaceMarkers::prune_and_reseed(const Mesh2D& mesh, const VofConfig& vof
             double snx = mx / nrm;
             double sny = my / nrm;
 
-            // Condition 3.5 : Cohérence angulaire de la normale avec les marqueurs du front principal (n . n_nb >= 0.5)
-            // Empêche toute normale PLIC aberrante ou discordante
-            bool normal_coherent = false;
-            for (const auto& mk_ex : cloud) {
-                if (!mk_ex.active) continue;
-                if (std::abs(mk_ex.cell_i - i) <= 1 && std::abs(mk_ex.cell_j - j) <= 1) {
-                    // Dans COVOF : mk.nx pointe vers +grad C (-snx)
-                    double dot_prod = (-snx) * mk_ex.nx + (-sny) * mk_ex.ny;
-                    if (dot_prod >= 0.5) {
-                        normal_coherent = true;
-                        break;
+            // Condition 3.5 : Cohérence angulaire de la normale avec les marqueurs du front principal (incluant halos MPI)
+            bool normal_coherent = on_jet_nozzle;
+            for (int dj = -1; dj <= 1 && !normal_coherent; ++dj) {
+                for (int di = -1; di <= 1; ++di) {
+                    if (di == 0 && dj == 0) continue;
+                    int nb_idx = mesh.cell_idx(i + di, j + dj);
+                    if (cnt_halo[nb_idx] <= 0.5) continue;
+                    double nbx = nrm_x_halo[nb_idx];
+                    double nby = nrm_y_halo[nb_idx];
+                    double nb_len = std::hypot(nbx, nby);
+                    if (nb_len > 1.0e-12) {
+                        double dot_prod = (-snx) * (nbx / nb_len) + (-sny) * (nby / nb_len);
+                        if (dot_prod >= 0.5) {
+                            normal_coherent = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!normal_coherent) {
+                for (const auto& mk_ex : cloud) {
+                    if (!mk_ex.active) continue;
+                    if (std::abs(mk_ex.cell_i - i) <= 1 && std::abs(mk_ex.cell_j - j) <= 1) {
+                        double dot_prod = (-snx) * mk_ex.nx + (-sny) * mk_ex.ny;
+                        if (dot_prod >= 0.5) {
+                            normal_coherent = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -680,7 +962,7 @@ void InterfaceMarkers::compute_curvature_from_markers(const Mesh2D& mesh, const 
     // Construction de la liste étendue ext_cloud (marqueurs locaux + fantômes MPI/périodiques dans la bande r_fit)
     std::vector<Marker> ext_cloud = cloud;
 
-    if (mesh.num_procs > 1) {
+    if (mesh.dims[0] > 1) {
         // --- PASSE 1 : HALO X (GAUCHE / DROITE) ---
         std::vector<double> send_L, send_R;
         for (const auto& mk : ext_cloud) {
@@ -740,7 +1022,25 @@ void InterfaceMarkers::compute_curvature_from_markers(const Mesh2D& mesh, const 
             mk.active = true;
             ext_cloud.push_back(mk);
         }
+    } else if (per_x) {
+        size_t n_cur = ext_cloud.size();
+        for (size_t idx_m = 0; idx_m < n_cur; ++idx_m) {
+            const auto& mk = ext_cloud[idx_m];
+            if (!mk.active) continue;
+            if (mk.x <= r_fit) {
+                Marker copy_mk = mk;
+                copy_mk.x += mesh.lx;
+                ext_cloud.push_back(copy_mk);
+            }
+            if (mesh.lx - mk.x <= r_fit) {
+                Marker copy_mk = mk;
+                copy_mk.x -= mesh.lx;
+                ext_cloud.push_back(copy_mk);
+            }
+        }
+    }
 
+    if (mesh.dims[1] > 1) {
         // --- PASSE 2 : HALO Y (BAS / HAUT, INCLUANT LES COINS REÇUS EN X) ---
         std::vector<double> send_B, send_T;
         size_t n_after_x = ext_cloud.size();
@@ -802,29 +1102,11 @@ void InterfaceMarkers::compute_curvature_from_markers(const Mesh2D& mesh, const 
             mk.active = true;
             ext_cloud.push_back(mk);
         }
-    }
-
-    // Copies périodiques locales si dims[d] == 1
-    if (per_x && mesh.dims[0] == 1) {
+    } else if (per_y) {
         size_t n_cur = ext_cloud.size();
         for (size_t idx_m = 0; idx_m < n_cur; ++idx_m) {
             const auto& mk = ext_cloud[idx_m];
-            if (mk.x <= r_fit) {
-                Marker copy_mk = mk;
-                copy_mk.x += mesh.lx;
-                ext_cloud.push_back(copy_mk);
-            }
-            if (mesh.lx - mk.x <= r_fit) {
-                Marker copy_mk = mk;
-                copy_mk.x -= mesh.lx;
-                ext_cloud.push_back(copy_mk);
-            }
-        }
-    }
-    if (per_y && mesh.dims[1] == 1) {
-        size_t n_cur = ext_cloud.size();
-        for (size_t idx_m = 0; idx_m < n_cur; ++idx_m) {
-            const auto& mk = ext_cloud[idx_m];
+            if (!mk.active) continue;
             if (mk.y <= r_fit) {
                 Marker copy_mk = mk;
                 copy_mk.y += mesh.ly;
@@ -838,11 +1120,13 @@ void InterfaceMarkers::compute_curvature_from_markers(const Mesh2D& mesh, const 
         }
     }
 
-    // Indexation spatiale sur la grille étendue [-1 .. nx+2] x [-1 .. ny+2] (taille (nx+4) x (ny+4))
-    int stride_x = nx + 4;
-    int stride_y = ny + 4;
+    // Indexation spatiale dynamique adaptée aux maillages anisotropes
+    int rx_rad = std::max(2, static_cast<int>(std::ceil(r_fit / dx)));
+    int ry_rad = std::max(2, static_cast<int>(std::ceil(r_fit / dy)));
+    int stride_x = nx + 2 * rx_rad + 2;
+    int stride_y = ny + 2 * ry_rad + 2;
     auto ext_idx = [&](int ii, int jj) {
-        return (jj + 1) * stride_x + (ii + 1);
+        return (jj + ry_rad) * stride_x + (ii + rx_rad);
     };
 
     std::vector<int> head(static_cast<size_t>(stride_x * stride_y), -1);
@@ -855,7 +1139,7 @@ void InterfaceMarkers::compute_curvature_from_markers(const Mesh2D& mesh, const 
         int cj = static_cast<int>(std::floor((mk.y - y_min_loc) / dy)) + 1;
         mk.cell_i = ci;
         mk.cell_j = cj;
-        if (ci >= -1 && ci <= nx + 2 && cj >= -1 && cj <= ny + 2) {
+        if (ci >= 1 - rx_rad && ci <= nx + rx_rad && cj >= 1 - ry_rad && cj <= ny + ry_rad) {
             int b = ext_idx(ci, cj);
             next_mk[m] = head[b];
             head[b] = static_cast<int>(m);
@@ -904,8 +1188,8 @@ void InterfaceMarkers::compute_curvature_from_markers(const Mesh2D& mesh, const 
             double d_min = 1.0e30;
             int n_pts = 0;
 
-            for (int dj = -2; dj <= 2; ++dj) {
-                for (int di = -2; di <= 2; ++di) {
+            for (int dj = -ry_rad; dj <= ry_rad; ++dj) {
+                for (int di = -rx_rad; di <= rx_rad; ++di) {
                     int p = head[ext_idx(i + di, j + dj)];
                     while (p != -1) {
                         if (ext_cloud[p].nx * n_ref_x + ext_cloud[p].ny * n_ref_y >= 0.5) {
@@ -951,8 +1235,8 @@ void InterfaceMarkers::compute_curvature_from_markers(const Mesh2D& mesh, const 
             double S0 = 0.0, S1 = 0.0, S2 = 0.0, S3 = 0.0, S4 = 0.0;
             double T0 = 0.0, T1 = 0.0, T2 = 0.0;
 
-            for (int dj = -2; dj <= 2; ++dj) {
-                for (int di = -2; di <= 2; ++di) {
+            for (int dj = -ry_rad; dj <= ry_rad; ++dj) {
+                for (int di = -rx_rad; di <= rx_rad; ++di) {
                     int p = head[ext_idx(i + di, j + dj)];
                     while (p != -1) {
                         if (ext_cloud[p].nx * e_eta_x + ext_cloud[p].ny * e_eta_y >= 0.5) {
@@ -1043,7 +1327,8 @@ void InterfaceMarkers::compute_curvature_from_markers(const Mesh2D& mesh, const 
                         cloud[p].nx = p_nx / p_len;
                         cloud[p].ny = p_ny / p_len;
                     }
-                    cloud[p].kappa = (2.0 * (a_hat / h)) / std::pow(1.0 + slope_p * slope_p, 1.5);
+                    double mk_kap = (2.0 * (a_hat / h)) / std::pow(1.0 + slope_p * slope_p, 1.5);
+                    cloud[p].kappa = std::clamp(mk_kap, -kap_max, kap_max);
                 }
                 p = next_mk[p];
             }
@@ -1067,6 +1352,35 @@ void InterfaceMarkers::compute_curvature_from_markers(const Mesh2D& mesh, const 
         fields.has_marker_kappa[k]  = (flag_kap[k] > 0.5) ? 1 : 0;
         fields.has_marker_normal[k] = (flag_nrm[k] > 0.5) ? 1 : 0;
     }
+
+    // Passe conservative de lissage tangentiel de courbure (préserve kappa=const, amortit modes de Nyquist)
+    std::vector<double> kap_smooth = fields.marker_kappa;
+    for (int j = 1; j <= ny; ++j) {
+        for (int i = 1; i <= nx; ++i) {
+            int idx = mesh.cell_idx(i, j);
+            if (!fields.has_marker_kappa[idx]) continue;
+            double snx = fields.marker_nx[idx];
+            double sny = fields.marker_ny[idx];
+            double sum_nb = 0.0;
+            int cnt_nb = 0;
+            for (int dj = -1; dj <= 1; ++dj) {
+                for (int di = -1; di <= 1; ++di) {
+                    if (di == 0 && dj == 0) continue;
+                    int nb_idx = mesh.cell_idx(i + di, j + dj);
+                    if (fields.has_marker_kappa[nb_idx] &&
+                        (snx * fields.marker_nx[nb_idx] + sny * fields.marker_ny[nb_idx] >= 0.5)) {
+                        sum_nb += fields.marker_kappa[nb_idx];
+                        cnt_nb++;
+                    }
+                }
+            }
+            if (cnt_nb > 0) {
+                kap_smooth[idx] = std::clamp(0.5 * fields.marker_kappa[idx] + 0.5 * (sum_nb / cnt_nb), -kap_max, kap_max);
+            }
+        }
+    }
+    fields.marker_kappa = std::move(kap_smooth);
+    MpiComm::sync_cell_scalar(mesh, fields.marker_kappa);
 }
 
 // =============================================================================

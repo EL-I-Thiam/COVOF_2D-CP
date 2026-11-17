@@ -532,7 +532,7 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
                 double val_p = div;
 
                 // Régularisation minimale du mode constant de pression sans briser la contrainte d'incompressibilité
-                if (i == 1 && j == 1 && !compressible) {
+                if (mesh.rank == 0 && i == 1 && j == 1 && !compressible) {
                     val_p = div_cell[c_idx(i, j)] * dvol + 1.0e-10 * tf.p[mesh.cell_idx(1, 1)] * dvol;
                 } else if (compressible) {
                     int c = mesh.cell_idx(i, j);
@@ -1116,7 +1116,12 @@ int NavierStokesSolver::solve_standard_projection(FlowFields& fields, double dt,
         r_p[c] = b_p[c] - Ap_p[c];
     }
     double b_norm = MpiComm::global_norm2(mesh, b_p, np);
-    if (b_norm < 1.0e-30) b_norm = 1.0;
+    if (b_norm < 1.0e-14) {
+        MpiComm::sync_u(mesh, fields.u);
+        MpiComm::sync_v(mesh, fields.v);
+        MpiComm::apply_boundary_conditions(mesh, bc, fields, false);
+        return iters_u;
+    }
 
     double r_norm = MpiComm::global_norm2(mesh, r_p, np);
 
@@ -1218,7 +1223,7 @@ int NavierStokesSolver::solve_standard_projection(FlowFields& fields, double dt,
             double p_s = (j > 1) ? fields.p[mesh.cell_idx(i, j - 1)] :
                          (bc.bottom.type == BCType::PERIODIC ? fields.p[mesh.cell_idx(i, ny)] : fields.p[mesh.cell_idx(i, 1)]);
             double p_n = (j <= ny) ? fields.p[mesh.cell_idx(i, j)] :
-                         (bc.top.type == BCType::PERIODIC ? fields.p[mesh.cell_idx(i, 1)] : fields.p[mesh.cell_idx(nx, j)]);
+                         (bc.top.type == BCType::PERIODIC ? fields.p[mesh.cell_idx(i, 1)] : fields.p[mesh.cell_idx(i, ny)]);
 
             double grad_p_y = (p_n - p_s) / dy;
             fields.v[mesh.v_idx(i, j)] -= (dt / rho_v) * grad_p_y;

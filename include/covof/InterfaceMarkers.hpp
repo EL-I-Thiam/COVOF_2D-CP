@@ -57,6 +57,9 @@ public:
     /**
      * @brief Advection lagrangienne d'ordre 2 Runge-Kutta explicite (RK2 Heun / point-milieu) avec CVI
      */
+    void advect_rk2(const Mesh2D& mesh, const VofConfig& vof_cfg, const DomainBC& bc,
+                    const FlowFields& fields, double dt);
+
     void advect_rk2(const Mesh2D& mesh, const VofConfig& vof_cfg, const FlowFields& fields, double dt);
 
     /**

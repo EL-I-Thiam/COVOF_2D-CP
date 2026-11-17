@@ -233,18 +233,18 @@ void MpiComm::sync_v(const Mesh2D& mesh, std::vector<double>& v) {
     int nx = mesh.nx_local;
     int ny = mesh.ny_local;
 
-    // Traitement séquentiel avec périodicité
+    // Traitement séquentiel avec périodicité : Y d'abord sur 1..nx, puis X sur 0..ny+1 pour propager les coins
     if (mesh.num_procs == 1) {
-        if (!mesh.is_boundary_left) {
-            for (int j = 0; j <= ny + 1; ++j) {
-                v[mesh.v_idx(0, j)]      = v[mesh.v_idx(nx, j)];
-                v[mesh.v_idx(nx + 1, j)] = v[mesh.v_idx(1, j)];
-            }
-        }
         if (!mesh.is_boundary_bottom) {
             for (int i = 1; i <= nx; ++i) {
                 v[mesh.v_idx(i, 0)]      = v[mesh.v_idx(i, ny)];
                 v[mesh.v_idx(i, ny + 1)] = v[mesh.v_idx(i, 1)];
+            }
+        }
+        if (!mesh.is_boundary_left) {
+            for (int j = 0; j <= ny + 1; ++j) {
+                v[mesh.v_idx(0, j)]      = v[mesh.v_idx(nx, j)];
+                v[mesh.v_idx(nx + 1, j)] = v[mesh.v_idx(1, j)];
             }
         }
         return;
@@ -591,6 +591,21 @@ void MpiComm::apply_boundary_conditions(const Mesh2D& mesh, const DomainBC& bc, 
             }
             // Calcul de la résolution géométrique de cellule
             f.p[mesh.cell_idx(i, ny + 1)] = f.p[mesh.cell_idx(i, ny)];
+        }
+    }
+
+    // Raccordement des vitesses fantômes aux coins physiques pour l'interpolation CVI
+    if (!homogeneous) {
+        if (mesh.is_boundary_right && mesh.is_boundary_bottom) {
+            f.u[mesh.u_idx(nx + 1, 0)] = f.u[mesh.u_idx(nx + 1, 1)];
+            f.v[mesh.v_idx(nx + 1, 0)] = f.v[mesh.v_idx(nx, 0)];
+        }
+        if (mesh.is_boundary_right && mesh.is_boundary_top) {
+            f.u[mesh.u_idx(nx + 1, ny + 1)] = f.u[mesh.u_idx(nx + 1, ny)];
+            f.v[mesh.v_idx(nx + 1, ny + 1)] = f.v[mesh.v_idx(nx, ny + 1)];
+        }
+        if (mesh.is_boundary_left && mesh.is_boundary_top) {
+            f.v[mesh.v_idx(0, ny + 1)] = f.v[mesh.v_idx(1, ny + 1)];
         }
     }
 }

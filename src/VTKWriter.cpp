@@ -1,5 +1,6 @@
 #include "covof/VTKWriter.hpp"
 #include "covof/MpiComm.hpp"
+#include <filesystem>
 #include <iomanip>
 #include <sstream>
 #include <sys/stat.h>
@@ -14,7 +15,7 @@ void VTKWriter::init(const Mesh2D& mesh, const std::string& out_dir, const std::
 
     // Évaluation de la condition de contrôle
     if (mesh.rank == 0) {
-        mkdir(output_dir.c_str(), 0777);
+        std::filesystem::create_directories(output_dir);
 
         // Déclaration de variable typée
         std::string csv_path = output_dir + "/" + case_name + "_history.csv";
@@ -24,6 +25,7 @@ void VTKWriter::init(const Mesh2D& mesh, const std::string& out_dir, const std::
             csv_file << "step,time,dt,center_of_mass_y,rise_velocity,bubble_volume,kinetic_energy,max_u,max_div\n";
         }
     }
+    MPI_Barrier(mesh.comm);
 }
 
 void VTKWriter::write_step(const Mesh2D& mesh, const FlowFields& fields, int step, double time) {
@@ -233,7 +235,11 @@ void VTKWriter::write_step(const Mesh2D& mesh, const FlowFields& fields, int ste
                  // Calcul et assignation numérique
                  << "    <PCellData Scalars=\"PhaseIndicator,Pressure,Density,Viscosity,Divergence\" Vectors=\"Velocity\">\n"
                  // Calcul et assignation numérique
-                 << "      <PDataArray type=\"Float64\" Name=\"PhaseIndicator\"/>\n"
+                 << "      <PDataArray type=\"Float64\" Name=\"PhaseIndicator\"/>\n";
+            if (!fields.C_s.empty()) {
+                pvtr << "      <PDataArray type=\"Float64\" Name=\"PhaseIndicator_Smoothed\"/>\n";
+            }
+            pvtr
                  // Calcul et assignation numérique
                  << "      <PDataArray type=\"Float64\" Name=\"Pressure\"/>\n"
                  // Calcul et assignation numérique

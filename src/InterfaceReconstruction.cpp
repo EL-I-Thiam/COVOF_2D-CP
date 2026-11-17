@@ -1,4 +1,5 @@
 #include "covof/InterfaceReconstruction.hpp"
+#include "covof/MpiComm.hpp"
 #include <cmath>
 #include <algorithm>
 #include <array>
@@ -543,30 +544,70 @@ void InterfaceReconstruction::reconstruct(ReconstructionMethod method, const Mes
             break;
     }
 
-    // Propagation des normales reconstruites vers les mailles fantomes (periodicite / bords)
+    // Propagation des normales reconstruites vers les mailles fantomes (MPI / periodicite / bords)
     int nx = mesh.nx_local;
     int ny = mesh.ny_local;
-    int i_left_src  = (!mesh.is_boundary_left  && mesh.num_procs == 1) ? nx : 1;
-    int i_right_src = (!mesh.is_boundary_right && mesh.num_procs == 1) ? 1  : nx;
-    int j_bot_src   = (!mesh.is_boundary_bottom && mesh.num_procs == 1) ? ny : 1;
-    int j_top_src   = (!mesh.is_boundary_top    && mesh.num_procs == 1) ? 1  : ny;
+    std::vector<double> seg_nx((nx + 2) * (ny + 2), 0.0);
+    std::vector<double> seg_ny((nx + 2) * (ny + 2), 0.0);
+    for (int j = 1; j <= ny; ++j) {
+        for (int i = 1; i <= nx; ++i) {
+            int idx = mesh.cell_idx(i, j);
+            seg_nx[idx] = segments[idx].nx;
+            seg_ny[idx] = segments[idx].ny;
+        }
+    }
+    MpiComm::sync_cell_scalar(mesh, seg_nx);
+    MpiComm::sync_cell_scalar(mesh, seg_ny);
+
+    if (mesh.is_boundary_left) {
+        for (int j = 1; j <= ny; ++j) {
+            seg_nx[mesh.cell_idx(0, j)] = seg_nx[mesh.cell_idx(1, j)];
+            seg_ny[mesh.cell_idx(0, j)] = seg_ny[mesh.cell_idx(1, j)];
+        }
+    }
+    if (mesh.is_boundary_right) {
+        for (int j = 1; j <= ny; ++j) {
+            seg_nx[mesh.cell_idx(nx + 1, j)] = seg_nx[mesh.cell_idx(nx, j)];
+            seg_ny[mesh.cell_idx(nx + 1, j)] = seg_ny[mesh.cell_idx(nx, j)];
+        }
+    }
+    if (mesh.is_boundary_bottom) {
+        for (int i = 0; i <= nx + 1; ++i) {
+            seg_nx[mesh.cell_idx(i, 0)] = seg_nx[mesh.cell_idx(i, 1)];
+            seg_ny[mesh.cell_idx(i, 0)] = seg_ny[mesh.cell_idx(i, 1)];
+        }
+    }
+    if (mesh.is_boundary_top) {
+        for (int i = 0; i <= nx + 1; ++i) {
+            seg_nx[mesh.cell_idx(i, ny + 1)] = seg_nx[mesh.cell_idx(i, ny)];
+            seg_ny[mesh.cell_idx(i, ny + 1)] = seg_ny[mesh.cell_idx(i, ny)];
+        }
+    }
 
     for (int j = 1; j <= ny; ++j) {
         // Maille fantome gauche i = 0
         int idx0 = mesh.cell_idx(0, j);
         double c0 = C[idx0];
         if (c0 > 1.0e-6 && c0 < 1.0 - 1.0e-6) {
-            const auto& s_src = segments[mesh.cell_idx(i_left_src, j)];
-            double alpha0 = compute_alpha(mesh.xv(0), mesh.xv(1), mesh.yv(j), mesh.yv(j + 1), s_src.nx, s_src.ny, c0);
-            segments[idx0] = {s_src.nx, s_src.ny, alpha0};
+            double snx0 = seg_nx[idx0], sny0 = seg_ny[idx0];
+            double nrm0 = std::hypot(snx0, sny0);
+            if (nrm0 > 1.0e-12) {
+                snx0 /= nrm0; sny0 /= nrm0;
+                double alpha0 = compute_alpha(mesh.xv(0), mesh.xv(1), mesh.yv(j), mesh.yv(j + 1), snx0, sny0, c0);
+                segments[idx0] = {snx0, sny0, alpha0};
+            }
         }
         // Maille fantome droite i = nx + 1
         int idxR = mesh.cell_idx(nx + 1, j);
         double cR = C[idxR];
         if (cR > 1.0e-6 && cR < 1.0 - 1.0e-6) {
-            const auto& s_src = segments[mesh.cell_idx(i_right_src, j)];
-            double alphaR = compute_alpha(mesh.xv(nx + 1), mesh.xv(nx + 2), mesh.yv(j), mesh.yv(j + 1), s_src.nx, s_src.ny, cR);
-            segments[idxR] = {s_src.nx, s_src.ny, alphaR};
+            double snxR = seg_nx[idxR], snyR = seg_ny[idxR];
+            double nrmR = std::hypot(snxR, snyR);
+            if (nrmR > 1.0e-12) {
+                snxR /= nrmR; snyR /= nrmR;
+                double alphaR = compute_alpha(mesh.xv(nx + 1), mesh.xv(nx + 2), mesh.yv(j), mesh.yv(j + 1), snxR, snyR, cR);
+                segments[idxR] = {snxR, snyR, alphaR};
+            }
         }
     }
 
@@ -575,17 +616,25 @@ void InterfaceReconstruction::reconstruct(ReconstructionMethod method, const Mes
         int idxB = mesh.cell_idx(i, 0);
         double cB = C[idxB];
         if (cB > 1.0e-6 && cB < 1.0 - 1.0e-6) {
-            const auto& s_src = segments[mesh.cell_idx(i, j_bot_src)];
-            double alphaB = compute_alpha(mesh.xv(i), mesh.xv(i + 1), mesh.yv(0), mesh.yv(1), s_src.nx, s_src.ny, cB);
-            segments[idxB] = {s_src.nx, s_src.ny, alphaB};
+            double snxB = seg_nx[idxB], snyB = seg_ny[idxB];
+            double nrmB = std::hypot(snxB, snyB);
+            if (nrmB > 1.0e-12) {
+                snxB /= nrmB; snyB /= nrmB;
+                double alphaB = compute_alpha(mesh.xv(i), mesh.xv(i + 1), mesh.yv(0), mesh.yv(1), snxB, snyB, cB);
+                segments[idxB] = {snxB, snyB, alphaB};
+            }
         }
         // Maille fantome superieure j = ny + 1
         int idxT = mesh.cell_idx(i, ny + 1);
         double cT = C[idxT];
         if (cT > 1.0e-6 && cT < 1.0 - 1.0e-6) {
-            const auto& s_src = segments[mesh.cell_idx(i, j_top_src)];
-            double alphaT = compute_alpha(mesh.xv(i), mesh.xv(i + 1), mesh.yv(ny + 1), mesh.yv(ny + 2), s_src.nx, s_src.ny, cT);
-            segments[idxT] = {s_src.nx, s_src.ny, alphaT};
+            double snxT = seg_nx[idxT], snyT = seg_ny[idxT];
+            double nrmT = std::hypot(snxT, snyT);
+            if (nrmT > 1.0e-12) {
+                snxT /= nrmT; snyT /= nrmT;
+                double alphaT = compute_alpha(mesh.xv(i), mesh.xv(i + 1), mesh.yv(ny + 1), mesh.yv(ny + 2), snxT, snyT, cT);
+                segments[idxT] = {snxT, snyT, alphaT};
+            }
         }
     }
 }

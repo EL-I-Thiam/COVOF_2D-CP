@@ -6,6 +6,10 @@
 
 namespace covof {
 void InterfaceTracker::set_initial_condition(const Mesh2D& mesh, const InitialConditionConfig& ic, FlowFields& fields) {
+    // 1. Initialisation des vitesses (par défaut 0 ou imposé)
+    std::fill(fields.u.begin(), fields.u.end(), ic.u);
+    std::fill(fields.v.begin(), fields.v.end(), ic.v);
+
     // Déclaration de variable typée
     double eps = 1.5 * std::max(mesh.dx, mesh.dy);
 
@@ -68,8 +72,8 @@ void InterfaceTracker::set_initial_condition(const Mesh2D& mesh, const InitialCo
                 }
             // Calcul et assignation numérique
             } else if (ic.type == InitialConditionType::BUBBLE || ic.type == InitialConditionType::CYLINDER) {
-                if (ic.type == InitialConditionType::CYLINDER || vof_cfg.reconstruction_method == "PLIC" ||
-                    (ic.axis_a > 0.0 && ic.axis_b > 0.0)) {
+                if (vof_cfg.use_markers || ic.type == InitialConditionType::CYLINDER ||
+                    vof_cfg.reconstruction_method == "PLIC" || (ic.axis_a > 0.0 && ic.axis_b > 0.0)) {
                     double x_min = mesh.xv(i);
                     double y_min = mesh.yv(j);
                     int count_out = 0;
@@ -98,20 +102,52 @@ void InterfaceTracker::set_initial_condition(const Mesh2D& mesh, const InitialCo
                 }
             // Calcul et assignation numérique
             } else if (ic.type == InitialConditionType::DAM_BREAK) {
-                // Évaluation de la condition de contrôle
-                if (x >= ic.box_x0 && x <= ic.box_x1 && y >= ic.box_y0 && y <= ic.box_y1) {
-                    // Calcul de la résolution géométrique de cellule
-                    fields.C[idx] = 1.0;
+                if (vof_cfg.use_markers) {
+                    double x_min = mesh.xv(i);
+                    double y_min = mesh.yv(j);
+                    int count_in = 0;
+                    const int N_SUB = 16;
+                    for (int sj = 0; sj < N_SUB; ++sj) {
+                        double ys = y_min + (sj + 0.5) * (mesh.dy / N_SUB);
+                        for (int si = 0; si < N_SUB; ++si) {
+                            double xs = x_min + (si + 0.5) * (mesh.dx / N_SUB);
+                            if (xs >= ic.box_x0 && xs <= ic.box_x1 && ys >= ic.box_y0 && ys <= ic.box_y1) {
+                                count_in++;
+                            }
+                        }
+                    }
+                    fields.C[idx] = static_cast<double>(count_in) / (N_SUB * N_SUB);
                 } else {
-                    // Calcul de la résolution géométrique de cellule
-                    fields.C[idx] = 0.0;
+                    if (x >= ic.box_x0 && x <= ic.box_x1 && y >= ic.box_y0 && y <= ic.box_y1) {
+                        fields.C[idx] = 1.0;
+                    } else {
+                        fields.C[idx] = 0.0;
+                    }
                 }
             // Calcul et assignation numérique
             } else if (ic.type == InitialConditionType::SHEAR_LAYER) {
-                // Déclaration de variable typée
-                double int_y = ic.center_y + ic.pert_amp * std::sin(2.0 * M_PI * ic.pert_k * x / mesh.lx);
-                // Calcul de la résolution géométrique de cellule
-                fields.C[idx] = (y <= int_y) ? 1.0 : 0.0;
+                if (vof_cfg.use_markers) {
+                    double x_min = mesh.xv(i);
+                    double y_min = mesh.yv(j);
+                    int count_in = 0;
+                    const int N_SUB = 16;
+                    for (int sj = 0; sj < N_SUB; ++sj) {
+                        double ys = y_min + (sj + 0.5) * (mesh.dy / N_SUB);
+                        for (int si = 0; si < N_SUB; ++si) {
+                            double xs = x_min + (si + 0.5) * (mesh.dx / N_SUB);
+                            double int_y = ic.center_y + ic.pert_amp * std::sin(2.0 * M_PI * ic.pert_k * xs / mesh.lx);
+                            if (ys <= int_y) {
+                                count_in++;
+                            }
+                        }
+                    }
+                    fields.C[idx] = static_cast<double>(count_in) / (N_SUB * N_SUB);
+                } else {
+                    // Déclaration de variable typée
+                    double int_y = ic.center_y + ic.pert_amp * std::sin(2.0 * M_PI * ic.pert_k * x / mesh.lx);
+                    // Calcul de la résolution géométrique de cellule
+                    fields.C[idx] = (y <= int_y) ? 1.0 : 0.0;
+                }
             // Calcul et assignation numérique pour nappe liquide (Cas 3.2 Fluids 2021)
             } else if (ic.type == InitialConditionType::LIQUID_SHEET) {
                 // Déclaration de la position centrale et demi-épaisseur de nappe
@@ -141,13 +177,30 @@ void InterfaceTracker::set_initial_condition(const Mesh2D& mesh, const InitialCo
                 double half_w = (ic.jet_width > 0.0) ? 0.5 * ic.jet_width : 0.04;
                 // Déclaration de la hauteur initiale de l'amorce de jet sous la paroi supérieure
                 double stub_height = 2.0 * mesh.dy;
-                // Évaluation de l'indicatrice : C = 0 dans l'amorce liquide, C = 1 dans la cavité de gaz
-                if (y >= mesh.ly - stub_height && std::abs(x - x_c) <= half_w) {
-                    // Calcul de la résolution géométrique de cellule
-                    fields.C[idx] = 0.0;
+                if (vof_cfg.use_markers) {
+                    double x_min = mesh.xv(i);
+                    double y_min = mesh.yv(j);
+                    int count_out = 0;
+                    const int N_SUB = 16;
+                    for (int sj = 0; sj < N_SUB; ++sj) {
+                        double ys = y_min + (sj + 0.5) * (mesh.dy / N_SUB);
+                        for (int si = 0; si < N_SUB; ++si) {
+                            double xs = x_min + (si + 0.5) * (mesh.dx / N_SUB);
+                            if (!(ys >= mesh.ly - stub_height && std::abs(xs - x_c) <= half_w)) {
+                                count_out++;
+                            }
+                        }
+                    }
+                    fields.C[idx] = static_cast<double>(count_out) / (N_SUB * N_SUB);
                 } else {
-                    // Calcul de la résolution géométrique de cellule
-                    fields.C[idx] = 1.0;
+                    // Évaluation de l'indicatrice : C = 0 dans l'amorce liquide, C = 1 dans la cavité de gaz
+                    if (y >= mesh.ly - stub_height && std::abs(x - x_c) <= half_w) {
+                        // Calcul de la résolution géométrique de cellule
+                        fields.C[idx] = 0.0;
+                    } else {
+                        // Calcul de la résolution géométrique de cellule
+                        fields.C[idx] = 1.0;
+                    }
                 }
             // Calcul et assignation numérique
             } else if (ic.type == InitialConditionType::VORTEX_SHEAR) {
@@ -192,10 +245,28 @@ void InterfaceTracker::set_initial_condition(const Mesh2D& mesh, const InitialCo
                 }
             // Calcul et assignation numérique
             } else if (ic.type == InitialConditionType::RAYLEIGH_TAYLOR) {
-                // Déclaration de variable typée
-                double int_y = ic.center_y + ic.pert_amp * std::cos(2.0 * M_PI * ic.pert_k * x / mesh.lx);
-                // Calcul de la résolution géométrique de cellule
-                fields.C[idx] = (y >= int_y) ? 1.0 : 0.0;
+                if (vof_cfg.use_markers) {
+                    double x_min = mesh.xv(i);
+                    double y_min = mesh.yv(j);
+                    int count_in = 0;
+                    const int N_SUB = 16;
+                    for (int sj = 0; sj < N_SUB; ++sj) {
+                        double ys = y_min + (sj + 0.5) * (mesh.dy / N_SUB);
+                        for (int si = 0; si < N_SUB; ++si) {
+                            double xs = x_min + (si + 0.5) * (mesh.dx / N_SUB);
+                            double int_y = ic.center_y + ic.pert_amp * std::cos(2.0 * M_PI * ic.pert_k * xs / mesh.lx);
+                            if (ys >= int_y) {
+                                count_in++;
+                            }
+                        }
+                    }
+                    fields.C[idx] = static_cast<double>(count_in) / (N_SUB * N_SUB);
+                } else {
+                    // Déclaration de variable typée
+                    double int_y = ic.center_y + ic.pert_amp * std::cos(2.0 * M_PI * ic.pert_k * x / mesh.lx);
+                    // Calcul de la résolution géométrique de cellule
+                    fields.C[idx] = (y >= int_y) ? 1.0 : 0.0;
+                }
             }
         }
     }
@@ -203,6 +274,9 @@ void InterfaceTracker::set_initial_condition(const Mesh2D& mesh, const InitialCo
     MpiComm::sync_cell_scalar(mesh, fields.C);
     if (enable_svof_smoothing) {
         smooth_svof_helmholtz(mesh, fields);
+    }
+    if (enable_diffusion_smoothing) {
+        smooth_diffusion(mesh, fields);
     }
     update_physical_properties(mesh, fields);
     if (vof_cfg.use_markers) {
@@ -376,7 +450,16 @@ void InterfaceTracker::update_physical_properties(const Mesh2D& mesh, FlowFields
         for (int i = 1; i <= nx; ++i) fields.C[mesh.cell_idx(i, 0)] = fields.C[mesh.cell_idx(i, 1)];
     }
     if (mesh.is_boundary_top) {
-        for (int i = 1; i <= nx; ++i) fields.C[mesh.cell_idx(i, ny + 1)] = fields.C[mesh.cell_idx(i, ny)];
+        if (bc.top.profile == "JET_INLET") {
+            double xc = (bc.top.jet_center > 0.0) ? bc.top.jet_center : 0.5 * mesh.lx;
+            double half_w = (bc.top.jet_width > 0.0) ? 0.5 * bc.top.jet_width : 0.04;
+            for (int i = 1; i <= nx; ++i) {
+                double x_c = mesh.xc(i);
+                fields.C[mesh.cell_idx(i, ny + 1)] = (std::abs(x_c - xc) <= half_w) ? 0.0 : 1.0;
+            }
+        } else {
+            for (int i = 1; i <= nx; ++i) fields.C[mesh.cell_idx(i, ny + 1)] = fields.C[mesh.cell_idx(i, ny)];
+        }
     }
     MpiComm::sync_cell_scalar(mesh, fields.C);
     if (mesh.is_boundary_left) {
@@ -388,7 +471,7 @@ void InterfaceTracker::update_physical_properties(const Mesh2D& mesh, FlowFields
     if (mesh.is_boundary_bottom) {
         for (int i = 0; i <= nx + 1; ++i) fields.C[mesh.cell_idx(i, 0)] = fields.C[mesh.cell_idx(i, 1)];
     }
-    if (mesh.is_boundary_top) {
+    if (mesh.is_boundary_top && bc.top.profile != "JET_INLET") {
         for (int i = 0; i <= nx + 1; ++i) fields.C[mesh.cell_idx(i, ny + 1)] = fields.C[mesh.cell_idx(i, ny)];
     }
 
@@ -688,7 +771,7 @@ void InterfaceTracker::apply_marker_normals_to_segments(const Mesh2D& mesh, cons
                     bool coherent = true;
                     if (g_mag > 1.0e-3 / std::min(dx, dy)) {
                         double dot_prod = (snx * gx + sny * gy) / g_mag;
-                        if (dot_prod < 0.3) {
+                        if (dot_prod < 0.5) {
                             coherent = false;
                         }
                     }
@@ -701,6 +784,65 @@ void InterfaceTracker::apply_marker_normals_to_segments(const Mesh2D& mesh, cons
                 }
             }
         }
+    }
+
+    // Synchronisation MPI / periodique des segments modifies vers les mailles fantomes
+    std::vector<double> seg_nx((nx + 2) * (ny + 2), 0.0);
+    std::vector<double> seg_ny((nx + 2) * (ny + 2), 0.0);
+    for (int j = 1; j <= ny; ++j) {
+        for (int i = 1; i <= nx; ++i) {
+            int idx = mesh.cell_idx(i, j);
+            seg_nx[idx] = interface_segments[idx].nx;
+            seg_ny[idx] = interface_segments[idx].ny;
+        }
+    }
+    MpiComm::sync_cell_scalar(mesh, seg_nx);
+    MpiComm::sync_cell_scalar(mesh, seg_ny);
+    if (mesh.is_boundary_left) {
+        for (int j = 1; j <= ny; ++j) {
+            seg_nx[mesh.cell_idx(0, j)] = seg_nx[mesh.cell_idx(1, j)];
+            seg_ny[mesh.cell_idx(0, j)] = seg_ny[mesh.cell_idx(1, j)];
+        }
+    }
+    if (mesh.is_boundary_right) {
+        for (int j = 1; j <= ny; ++j) {
+            seg_nx[mesh.cell_idx(nx + 1, j)] = seg_nx[mesh.cell_idx(nx, j)];
+            seg_ny[mesh.cell_idx(nx + 1, j)] = seg_ny[mesh.cell_idx(nx, j)];
+        }
+    }
+    if (mesh.is_boundary_bottom) {
+        for (int i = 0; i <= nx + 1; ++i) {
+            seg_nx[mesh.cell_idx(i, 0)] = seg_nx[mesh.cell_idx(i, 1)];
+            seg_ny[mesh.cell_idx(i, 0)] = seg_ny[mesh.cell_idx(i, 1)];
+        }
+    }
+    if (mesh.is_boundary_top) {
+        for (int i = 0; i <= nx + 1; ++i) {
+            seg_nx[mesh.cell_idx(i, ny + 1)] = seg_nx[mesh.cell_idx(i, ny)];
+            seg_ny[mesh.cell_idx(i, ny + 1)] = seg_ny[mesh.cell_idx(i, ny)];
+        }
+    }
+    auto update_ghost_seg = [&](int gi, int gj) {
+        int gidx = mesh.cell_idx(gi, gj);
+        double cg = C_in[gidx];
+        if (cg > 1.0e-6 && cg < 1.0 - 1.0e-6) {
+            double snx = seg_nx[gidx], sny = seg_ny[gidx];
+            double nrm = std::hypot(snx, sny);
+            if (nrm > 1.0e-12) {
+                snx /= nrm; sny /= nrm;
+                double alpha = InterfaceReconstruction::compute_alpha(
+                    mesh.xv(gi), mesh.xv(gi + 1), mesh.yv(gj), mesh.yv(gj + 1), snx, sny, cg);
+                interface_segments[gidx] = {snx, sny, alpha};
+            }
+        }
+    };
+    for (int j = 1; j <= ny; ++j) {
+        update_ghost_seg(0, j);
+        update_ghost_seg(nx + 1, j);
+    }
+    for (int i = 0; i <= nx + 1; ++i) {
+        update_ghost_seg(i, 0);
+        update_ghost_seg(i, ny + 1);
     }
 }
 
@@ -743,7 +885,7 @@ void InterfaceTracker::advect(const Mesh2D& mesh, FlowFields& fields, double dt)
         smooth_diffusion(mesh, fields);
     }
     if (vof_cfg.use_markers) {
-        markers.advect_rk2(mesh, vof_cfg, fields, dt);
+        markers.advect_rk2(mesh, vof_cfg, bc, fields, dt);
         markers.migrate_mpi(mesh, vof_cfg, bc);
         markers.prune_and_reseed(mesh, vof_cfg, bc, fields);
         markers.compute_curvature_from_markers(mesh, vof_cfg, bc, fields);
@@ -885,9 +1027,13 @@ void InterfaceTracker::advect_ciam(const Mesh2D& mesh, FlowFields& fields, doubl
         }
 
         // Raccordement périodique strict des flux géométriques VOF
-        if (!mesh.is_boundary_left && mesh.num_procs == 1) {
+        if (!mesh.is_boundary_left && mesh.dims[0] == 1) {
             for (int j = 1; j <= ny; ++j) {
-                flux_vol_x[mesh.cell_idx(1, j)] = flux_vol_x[mesh.cell_idx(nx + 1, j)];
+                if (fields.u[mesh.u_idx(1, j)] >= 0.0) {
+                    flux_vol_x[mesh.cell_idx(1, j)] = flux_vol_x[mesh.cell_idx(nx + 1, j)];
+                } else {
+                    flux_vol_x[mesh.cell_idx(nx + 1, j)] = flux_vol_x[mesh.cell_idx(1, j)];
+                }
             }
         }
 
@@ -953,9 +1099,13 @@ void InterfaceTracker::advect_ciam(const Mesh2D& mesh, FlowFields& fields, doubl
         }
 
         // Raccordement périodique strict des flux géométriques VOF en Y
-        if (!mesh.is_boundary_bottom && mesh.num_procs == 1) {
+        if (!mesh.is_boundary_bottom && mesh.dims[1] == 1) {
             for (int i = 1; i <= nx; ++i) {
-                flux_vol_y[mesh.cell_idx(i, 1)] = flux_vol_y[mesh.cell_idx(i, ny + 1)];
+                if (fields.v[mesh.v_idx(i, 1)] >= 0.0) {
+                    flux_vol_y[mesh.cell_idx(i, 1)] = flux_vol_y[mesh.cell_idx(i, ny + 1)];
+                } else {
+                    flux_vol_y[mesh.cell_idx(i, ny + 1)] = flux_vol_y[mesh.cell_idx(i, 1)];
+                }
             }
         }
 
@@ -1042,10 +1192,10 @@ void InterfaceTracker::advect_weymouth_yue(const Mesh2D& mesh, FlowFields& field
                 for (int i = 1; i <= nx; ++i) c_arr[mesh.cell_idx(i, ny + 1)] = c_arr[mesh.cell_idx(i, ny)];
             }
         }
-        c_arr[mesh.cell_idx(0, 0)]           = c_arr[mesh.cell_idx(1, 1)];
-        c_arr[mesh.cell_idx(nx + 1, 0)]      = c_arr[mesh.cell_idx(nx, 1)];
-        c_arr[mesh.cell_idx(0, ny + 1)]      = c_arr[mesh.cell_idx(1, ny)];
-        c_arr[mesh.cell_idx(nx + 1, ny + 1)]  = c_arr[mesh.cell_idx(nx, ny)];
+        if (mesh.is_boundary_left  && mesh.is_boundary_bottom) c_arr[mesh.cell_idx(0, 0)]          = c_arr[mesh.cell_idx(1, 1)];
+        if (mesh.is_boundary_right && mesh.is_boundary_bottom) c_arr[mesh.cell_idx(nx + 1, 0)]     = c_arr[mesh.cell_idx(nx, 1)];
+        if (mesh.is_boundary_left  && mesh.is_boundary_top)    c_arr[mesh.cell_idx(0, ny + 1)]     = c_arr[mesh.cell_idx(1, ny)];
+        if (mesh.is_boundary_right && mesh.is_boundary_top)    c_arr[mesh.cell_idx(nx + 1, ny + 1)] = c_arr[mesh.cell_idx(nx, ny)];
     };
 
     // 2. Balayage directionnel 1D selon X (Weymouth & Yue, JCP 2010, Eq. 15)
@@ -1077,9 +1227,13 @@ void InterfaceTracker::advect_weymouth_yue(const Mesh2D& mesh, FlowFields& field
         }
 
         // Raccordement périodique strict des flux géométriques VOF
-        if (!mesh.is_boundary_left && mesh.num_procs == 1) {
+        if (!mesh.is_boundary_left && mesh.dims[0] == 1) {
             for (int j = 1; j <= ny; ++j) {
-                f_vol_x[mesh.cell_idx(1, j)] = f_vol_x[mesh.cell_idx(nx + 1, j)];
+                if (fields.u[mesh.u_idx(1, j)] >= 0.0) {
+                    f_vol_x[mesh.cell_idx(1, j)] = f_vol_x[mesh.cell_idx(nx + 1, j)];
+                } else {
+                    f_vol_x[mesh.cell_idx(nx + 1, j)] = f_vol_x[mesh.cell_idx(1, j)];
+                }
             }
         }
 
@@ -1130,9 +1284,13 @@ void InterfaceTracker::advect_weymouth_yue(const Mesh2D& mesh, FlowFields& field
         }
 
         // Raccordement périodique strict des flux géométriques VOF en Y
-        if (!mesh.is_boundary_bottom && mesh.num_procs == 1) {
+        if (!mesh.is_boundary_bottom && mesh.dims[1] == 1) {
             for (int i = 1; i <= nx; ++i) {
-                f_vol_y[mesh.cell_idx(i, 1)] = f_vol_y[mesh.cell_idx(i, ny + 1)];
+                if (fields.v[mesh.v_idx(i, 1)] >= 0.0) {
+                    f_vol_y[mesh.cell_idx(i, 1)] = f_vol_y[mesh.cell_idx(i, ny + 1)];
+                } else {
+                    f_vol_y[mesh.cell_idx(i, ny + 1)] = f_vol_y[mesh.cell_idx(i, 1)];
+                }
             }
         }
 
@@ -1178,8 +1336,16 @@ void InterfaceTracker::smooth_diffusion(const Mesh2D& mesh, FlowFields& fields) 
     double dtau = 0.2 * std::min(dx * dx, dy * dy);
     std::vector<double> C_next = fields.C_tilde;
 
+    auto apply_neumann_C_tilde = [&]() {
+        if (mesh.is_boundary_left)   for (int j = 1; j <= ny; ++j) fields.C_tilde[mesh.cell_idx(0, j)]      = fields.C_tilde[mesh.cell_idx(1, j)];
+        if (mesh.is_boundary_right)  for (int j = 1; j <= ny; ++j) fields.C_tilde[mesh.cell_idx(nx + 1, j)] = fields.C_tilde[mesh.cell_idx(nx, j)];
+        if (mesh.is_boundary_bottom) for (int i = 0; i <= nx + 1; ++i) fields.C_tilde[mesh.cell_idx(i, 0)]    = fields.C_tilde[mesh.cell_idx(i, 1)];
+        if (mesh.is_boundary_top)    for (int i = 0; i <= nx + 1; ++i) fields.C_tilde[mesh.cell_idx(i, ny + 1)] = fields.C_tilde[mesh.cell_idx(i, ny)];
+    };
+
     for (int step = 0; step < diffusion_smoothing_steps; ++step) {
         MpiComm::sync_cell_scalar(mesh, fields.C_tilde);
+        apply_neumann_C_tilde();
 
         for (int j = 1; j <= ny; ++j) {
             for (int i = 1; i <= nx; ++i) {
@@ -1192,6 +1358,7 @@ void InterfaceTracker::smooth_diffusion(const Mesh2D& mesh, FlowFields& fields) 
         fields.C_tilde = C_next;
     }
     MpiComm::sync_cell_scalar(mesh, fields.C_tilde);
+    apply_neumann_C_tilde();
 }
 
 } // namespace covof

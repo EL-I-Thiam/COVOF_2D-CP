@@ -2006,8 +2006,8 @@ void Simulation::run_vortex_advection() {
         // Évaluation de la condition de contrôle
         if (t + dt > T_period) dt = T_period - t;
 
-        // Déclaration de variable typée
-        double cos_factor = std::cos(M_PI * t / T_period);
+        // Évaluation au point-milieu t + 0.5*dt pour précision temporelle d'ordre 2 (VOF & Marqueurs)
+        double cos_factor = std::cos(M_PI * (t + 0.5 * dt) / T_period);
 
         // Imposer le champ de vitesse analytique sur les faces décalées
         for (int j = 1; j <= mesh.ny_local; ++j) {
@@ -2046,6 +2046,7 @@ void Simulation::run_vortex_advection() {
         // Halos et CL
         MpiComm::sync_u(mesh, fields.u);
         MpiComm::sync_v(mesh, fields.v);
+        MpiComm::apply_boundary_conditions(mesh, config.bc, fields, false);
 
         // Advection TVD de C
         tracker.advect(mesh, fields, dt);
@@ -2054,7 +2055,7 @@ void Simulation::run_vortex_advection() {
         t += dt;
 
         // Évaluation de la condition de contrôle
-        if (step % config.output.vtk_interval == 0 || t >= T_period || std::abs(t - 0.5 * T_period) < 0.5 * dt) {
+        if (step % config.output.vtk_interval == 0 || t >= T_period - 1.0e-12 || std::abs(t - 0.5 * T_period) < 0.5 * dt) {
             vtk_writer.write_step(mesh, fields, step, t);
             if (config.vof.use_markers && config.vof.write_markers_vtk) {
                 tracker.markers.write_vtk(mesh, config.output.output_dir, config.output.case_name, step);
@@ -2062,7 +2063,7 @@ void Simulation::run_vortex_advection() {
         }
 
         // Évaluation de la condition de contrôle
-        if (mesh.rank == 0 && (step % config.output.log_interval == 0 || t >= T_period)) {
+        if (mesh.rank == 0 && (step % config.output.log_interval == 0 || t >= T_period - 1.0e-12)) {
             // Calcul et assignation numérique
             std::cout << "  [Vortex] Pas " << step << " | t = " << std::fixed << std::setprecision(4) << t
                       << " s / " << T_period << " s\n";
