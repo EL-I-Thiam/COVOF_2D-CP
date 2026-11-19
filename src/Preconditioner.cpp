@@ -1,10 +1,71 @@
 #include "covof/Preconditioner.hpp"
 #include "covof/NavierStokesSolver.hpp"
+#include "covof/MpiComm.hpp"
 #include <cmath>
 #include <iostream>
 #include <algorithm>
 
 namespace covof {
+namespace {
+    template <typename IdxFn, typename SyncFn>
+    void solve_csr_block_ssor(const CSRMatrix& A,
+                              const Mesh2D& mesh,
+                              int ni, int nj,
+                              IdxFn halo_idx, SyncFn sync_fn,
+                              const std::vector<double>& bnd_W,
+                              const std::vector<double>& bnd_E,
+                              const std::vector<double>& bnd_S,
+                              const std::vector<double>& bnd_N,
+                              const std::vector<double>& rhs, int rhs_offset,
+                              std::vector<double>& x_flat,
+                              std::vector<double>& x_halo,
+                              int n_sweeps, double omega,
+                              bool sync_all_interior = false) {
+        const int n_rows = ni * nj;
+        if (A.nrows != n_rows || n_rows == 0) return;
+
+        std::fill(x_flat.begin(), x_flat.begin() + n_rows, 0.0);
+        std::fill(x_halo.begin(), x_halo.end(), 0.0);
+
+        const bool need_sync = (mesh.num_procs > 1) ||
+                               !mesh.is_boundary_left || !mesh.is_boundary_right ||
+                               !mesh.is_boundary_bottom || !mesh.is_boundary_top;
+        const double w = (omega > 0.1 && omega < 1.95) ? omega : 1.0;
+
+        auto relax_row = [&](int i, int j) {
+            int row = (j - 1) * ni + (i - 1);
+            double d = A.diag[row];
+            if (std::abs(d) < 1.0e-30) d = 1.0;
+
+            double rhs_eff = rhs[rhs_offset + row] - A.offdiag_dot(row, x_flat);
+            if (i == 1   && bnd_W[row] != 0.0) rhs_eff += bnd_W[row] * x_halo[halo_idx(0, j)];
+            if (i == ni  && bnd_E[row] != 0.0) rhs_eff += bnd_E[row] * x_halo[halo_idx(ni + 1, j)];
+            if (j == 1   && bnd_S[row] != 0.0) rhs_eff += bnd_S[row] * x_halo[halo_idx(i, 0)];
+            if (j == nj  && bnd_N[row] != 0.0) rhs_eff += bnd_N[row] * x_halo[halo_idx(i, nj + 1)];
+
+            double val = (1.0 - w) * x_flat[row] + w * (rhs_eff / d);
+            x_flat[row] = val;
+            if (sync_all_interior || i == 1 || i == ni || j == 1 || j == nj) {
+                x_halo[halo_idx(i, j)] = val;
+            }
+        };
+
+        for (int sweep = 0; sweep < n_sweeps; ++sweep) {
+            if (need_sync && sweep > 0) sync_fn(mesh, x_halo);
+            for (int j = 1; j <= nj; ++j) {
+                for (int i = 1; i <= ni; ++i) {
+                    relax_row(i, j);
+                }
+            }
+            if (need_sync) sync_fn(mesh, x_halo);
+            for (int j = nj; j >= 1; --j) {
+                for (int i = ni; i >= 1; --i) {
+                    relax_row(i, j);
+                }
+            }
+        }
+    }
+} // namespace
 // =============================================================================
 // 1. Préconditionneur Jacobi Diagonal
 // =============================================================================
@@ -75,51 +136,64 @@ void SSORPreconditioner::update(const FlowFields& fields, double dt) {
 }
 
 void SSORPreconditioner::apply(const std::vector<double>& z, std::vector<double>& r) const {
-    // Évaluation de la condition de contrôle
     if (!ns_solver) return;
 
-    // Déclaration de variable typée
-    int nu = ns_solver->n_owned_u;
-    // Déclaration de variable typée
-    int nv = ns_solver->n_owned_v;
-    // Déclaration de variable typée
-    int n  = ns_solver->n_owned_total;
+    const Mesh2D& mesh = ns_solver->mesh;
+    const int nu = ns_solver->n_owned_u;
+    const int nv = ns_solver->n_owned_v;
+    const int np = ns_solver->n_owned_p;
+    const int n  = ns_solver->n_owned_total;
+    const int nx = mesh.nx_local;
+    const int ny = mesh.ny_local;
+    const int u_nx = nx + (mesh.is_boundary_right ? 1 : 0);
+    const int v_ny = ny + (mesh.is_boundary_top ? 1 : 0);
 
     r.assign(n, 0.0);
-    // Déclaration de variable typée
-    std::vector<double> y(n, 0.0);
-
-    // Déclaration de variable typée
     double w = (omega > 0.1 && omega < 1.95) ? omega : 1.0;
-    // Déclaration de variable typée
-    double factor = 2.0 - w;
 
-    // Descente avant (Forward sweep)
-    for (int i = 0; i < n; ++i) {
-        // Déclaration de variable typée
-        double d = 1.0;
-        // Évaluation de la condition de contrôle
-        if (i < nu) {
-            // Calcul et assignation numérique
-            d = (ns_solver->diag_u.size() > (size_t)i) ? ns_solver->diag_u[i] : 1.0;
-        } else if (i < nu + nv) {
-            // Calcul et assignation numérique
-            d = (ns_solver->diag_v.size() > (size_t)(i - nu)) ? ns_solver->diag_v[i - nu] : 1.0;
-        } else {
-            // Calcul et assignation numérique
-            d = (ns_solver->diag_p.size() > (size_t)(i - nu - nv)) ? ns_solver->diag_p[i - nu - nv] : 1.0;
+    if (ns_solver->Fuu.nrows == nu && ns_solver->Fvv.nrows == nv) {
+        std::vector<double> r_u(nu, 0.0), r_v(nv, 0.0);
+        std::vector<double> ru_halo(static_cast<size_t>((mesh.nx_ghost + 1) * mesh.ny_ghost), 0.0);
+        std::vector<double> rv_halo(static_cast<size_t>(mesh.nx_ghost * (mesh.ny_ghost + 1)), 0.0);
+
+        solve_csr_block_ssor(
+            ns_solver->Fuu, mesh, u_nx, ny,
+            [&](int i, int j) { return mesh.u_idx(i, j); }, MpiComm::sync_u,
+            ns_solver->u_bnd_W, ns_solver->u_bnd_E, ns_solver->u_bnd_S, ns_solver->u_bnd_N,
+            z, 0, r_u, ru_halo, 2, w);
+
+        solve_csr_block_ssor(
+            ns_solver->Fvv, mesh, nx, v_ny,
+            [&](int i, int j) { return mesh.v_idx(i, j); }, MpiComm::sync_v,
+            ns_solver->v_bnd_W, ns_solver->v_bnd_E, ns_solver->v_bnd_S, ns_solver->v_bnd_N,
+            z, nu, r_v, rv_halo, 2, w);
+
+        std::copy(r_u.begin(), r_u.end(), r.begin());
+        std::copy(r_v.begin(), r_v.end(), r.begin() + nu);
+
+        if (ns_solver->is_monolithic() && ns_solver->SchurLaplace.nrows == np) {
+            std::vector<double> r_p(np, 0.0);
+            std::vector<double> rp_halo(static_cast<size_t>(mesh.nx_ghost * mesh.ny_ghost), 0.0);
+            solve_csr_block_ssor(
+                ns_solver->SchurLaplace, mesh, nx, ny,
+                [&](int i, int j) { return mesh.cell_idx(i, j); }, MpiComm::sync_cell_scalar,
+                ns_solver->schur_bnd_W, ns_solver->schur_bnd_E, ns_solver->schur_bnd_S, ns_solver->schur_bnd_N,
+                z, nu + nv, r_p, rp_halo, 2, w);
+            std::copy(r_p.begin(), r_p.end(), r.begin() + nu + nv);
         }
-        // Évaluation de la condition de contrôle
-        if (std::abs(d) < 1.0e-15) d = 1.0;
-
-        // Calcul et assignation numérique
-        y[i] = (w / d) * z[i];
+        return;
     }
 
-    // Remontée arrière (Backward sweep)
-    for (int i = n - 1; i >= 0; --i) {
-        // Calcul et assignation numérique
-        r[i] = y[i] * factor;
+    // Repli diagonal si les matrices CSR ne sont pas assemblees
+    for (int i = 0; i < nu; ++i) {
+        double d = (ns_solver->diag_u.size() > (size_t)i && std::abs(ns_solver->diag_u[i]) > 1.0e-15)
+                   ? ns_solver->diag_u[i] : 1.0;
+        r[i] = z[i] / d;
+    }
+    for (int i = 0; i < nv; ++i) {
+        double d = (ns_solver->diag_v.size() > (size_t)i && std::abs(ns_solver->diag_v[i]) > 1.0e-15)
+                   ? ns_solver->diag_v[i] : 1.0;
+        r[nu + i] = z[nu + i] / d;
     }
 }
 
@@ -191,262 +265,73 @@ void BlockTriangularPreconditioner::init(const NavierStokesSolver* solver) {
 void BlockTriangularPreconditioner::update(const FlowFields& fields, double dt) {
     if (!ns_solver) return;
 
-    nx = ns_solver->mesh.nx_local;
-    ny = ns_solver->mesh.ny_local;
-    dx = ns_solver->mesh.dx;
-    dy = ns_solver->mesh.dy;
+    const Mesh2D& mesh = ns_solver->mesh;
+    nx = mesh.nx_local;
+    ny = mesh.ny_local;
+    u_nx = nx + (mesh.is_boundary_right ? 1 : 0);
+    v_ny = ny + (mesh.is_boundary_top ? 1 : 0);
+    dx = mesh.dx;
+    dy = mesh.dy;
     dvol = dx * dy;
     r_al = ns_solver->r_al;
 
-    int nu = ns_solver->n_owned_u;
-    int nv = ns_solver->n_owned_v;
-    int np = ns_solver->n_owned_p;
+    const int nu = ns_solver->n_owned_u;
+    const int nv = ns_solver->n_owned_v;
+    const int np = ns_solver->n_owned_p;
 
-    u_aE.assign(nu, 0.0);
-    u_aW.assign(nu, 0.0);
-    u_aN.assign(nu, 0.0);
-    u_aS.assign(nu, 0.0);
-    u_aP.assign(nu, 1.0);
+    if (r_p.size() != static_cast<size_t>(np)) r_p.assign(np, 0.0);
+    if (rhs_u.size() != static_cast<size_t>(nu)) rhs_u.assign(nu, 0.0);
+    if (rhs_v.size() != static_cast<size_t>(nv)) rhs_v.assign(nv, 0.0);
+    if (r_u.size() != static_cast<size_t>(nu)) r_u.assign(nu, 0.0);
+    if (r_v.size() != static_cast<size_t>(nv)) r_v.assign(nv, 0.0);
 
-    v_aE.assign(nv, 0.0);
-    v_aW.assign(nv, 0.0);
-    v_aN.assign(nv, 0.0);
-    v_aS.assign(nv, 0.0);
-    v_aP.assign(nv, 1.0);
-
-    a_E.assign(np, 0.0);
-    a_W.assign(np, 0.0);
-    a_N.assign(np, 0.0);
-    a_S.assign(np, 0.0);
-    a_P.assign(np, 1.0);
-
-    r_p.resize(np);
-    rhs_u.resize(nu);
-    rhs_v.resize(nv);
-    r_u.resize(nu);
-    r_v.resize(nv);
-
-    int u_nx = nx + (ns_solver->mesh.is_boundary_right ? 1 : 0);
-    int v_ny = ny + (ns_solver->mesh.is_boundary_top ? 1 : 0);
-    double alpha_time = (ns_solver->is_gear() && fields.has_nm1) ? 1.5 : 1.0;
-
-    // 1. Stencil Fu
-    for (int j = 1; j <= ny; ++j) {
-        for (int i = 1; i <= u_nx; ++i) {
-            int dof = (j - 1) * u_nx + (i - 1);
-            double rho_u = fields.rho_u[ns_solver->mesh.u_idx(i, j)];
-            double Du = (alpha_time * rho_u / dt) * dvol;
-
-            bool is_wall = (i == 1 && ns_solver->mesh.is_boundary_left) ||
-                           (i == u_nx && ns_solver->mesh.is_boundary_right) ||
-                           (ns_solver->is_u_face_in_obstacle(i, j) && ns_solver->get_u_obstacle_perm(i, j) <= 1.0e-12);
-            if (is_wall) {
-                u_aP[dof] = (Du > 1.0e-30) ? Du : 1.0;
-                continue;
-            }
-
-            double mu_e = fields.mu[ns_solver->mesh.cell_idx(i, j)];
-            double mu_w = fields.mu[ns_solver->mesh.cell_idx(i - 1, j)];
-            double mu_avg = 0.5 * (mu_e + mu_w);
-
-            u_aE[dof] = 2.0 * mu_e * (dy / dx);
-            u_aW[dof] = 2.0 * mu_w * (dy / dx);
-            u_aN[dof] = mu_avg * (dx / dy);
-            u_aS[dof] = mu_avg * (dx / dy);
-
-            if (ns_solver->is_augmented_lagrangian()) {
-                double r_E = (ns_solver->adaptative_al && !fields.r_aal.empty())
-                             ? fields.r_aal[ns_solver->mesh.cell_idx(i, j)] : ns_solver->r_al;
-                double r_W = (ns_solver->adaptative_al && !fields.r_aal.empty())
-                             ? fields.r_aal[ns_solver->mesh.cell_idx(i - 1, j)] : ns_solver->r_al;
-                u_aE[dof] += r_E * (dy / dx);
-                u_aW[dof] += r_W * (dy / dx);
-            }
-            u_aP[dof] = Du + u_aE[dof] + u_aW[dof] + u_aN[dof] + u_aS[dof];
-            if (ns_solver->is_u_face_in_obstacle(i, j)) {
-                double perm = ns_solver->get_u_obstacle_perm(i, j);
-                if (perm > 1.0e-12) {
-                    u_aP[dof] += (mu_avg / perm) * dvol;
-                }
-            }
-            if (ns_solver->is_newton_convection()) {
-                double du_dx = (fields.u[ns_solver->mesh.u_idx(i + 1, j)] - fields.u[ns_solver->mesh.u_idx(i - 1, j)]) / (2.0 * dx);
-                u_aP[dof] += rho_u * std::max(0.0, du_dx) * dvol;
-            }
-        }
-    }
-
-    // 2. Stencil Fv
-    for (int j = 1; j <= v_ny; ++j) {
-        for (int i = 1; i <= nx; ++i) {
-            int dof = (j - 1) * nx + (i - 1);
-            double rho_v = fields.rho_v[ns_solver->mesh.v_idx(i, j)];
-            double Dv = (alpha_time * rho_v / dt) * dvol;
-
-            bool is_wall = (j == 1 && ns_solver->mesh.is_boundary_bottom &&
-                            (ns_solver->bc.bottom.type == BCType::DIRICHLET || ns_solver->bc.bottom.type == BCType::FREE_SLIP)) ||
-                           (j == v_ny && ns_solver->mesh.is_boundary_top &&
-                            (ns_solver->bc.top.type == BCType::DIRICHLET || ns_solver->bc.top.type == BCType::FREE_SLIP)) ||
-                           (ns_solver->is_v_face_in_obstacle(i, j) && ns_solver->get_v_obstacle_perm(i, j) <= 1.0e-12);
-            if (is_wall) {
-                v_aP[dof] = (Dv > 1.0e-30) ? Dv : 1.0;
-                continue;
-            }
-
-            double mu_n = fields.mu[ns_solver->mesh.cell_idx(i, j)];
-            double mu_s = fields.mu[ns_solver->mesh.cell_idx(i, j - 1)];
-            double mu_avg = 0.5 * (mu_n + mu_s);
-
-            v_aN[dof] = 2.0 * mu_n * (dx / dy);
-            v_aS[dof] = 2.0 * mu_s * (dx / dy);
-            v_aE[dof] = mu_avg * (dy / dx);
-            v_aW[dof] = mu_avg * (dy / dx);
-
-            if (ns_solver->is_augmented_lagrangian()) {
-                double r_N = (ns_solver->adaptative_al && !fields.r_aal.empty())
-                             ? fields.r_aal[ns_solver->mesh.cell_idx(i, j)] : ns_solver->r_al;
-                double r_S = (ns_solver->adaptative_al && !fields.r_aal.empty())
-                             ? fields.r_aal[ns_solver->mesh.cell_idx(i, j - 1)] : ns_solver->r_al;
-                v_aN[dof] += r_N * (dx / dy);
-                v_aS[dof] += r_S * (dx / dy);
-            }
-            v_aP[dof] = Dv + v_aN[dof] + v_aS[dof] + v_aE[dof] + v_aW[dof];
-            if (ns_solver->is_v_face_in_obstacle(i, j)) {
-                double perm = ns_solver->get_v_obstacle_perm(i, j);
-                if (perm > 1.0e-12) {
-                    v_aP[dof] += (mu_avg / perm) * dvol;
-                }
-            }
-            if (ns_solver->is_newton_convection()) {
-                double dv_dy = (fields.v[ns_solver->mesh.v_idx(i, j + 1)] - fields.v[ns_solver->mesh.v_idx(i, j - 1)]) / (2.0 * dy);
-                v_aP[dof] += rho_v * std::max(0.0, dv_dy) * dvol;
-            }
-        }
-    }
-
-    // 3. Stencil Schur S
-    for (int j = 1; j <= ny; ++j) {
-        for (int i = 1; i <= nx; ++i) {
-            int c = (j - 1) * nx + (i - 1);
-
-            // Face Ouest (u_i, j)
-            bool is_wall_W = (i == 1 && ns_solver->mesh.is_boundary_left &&
-                              (ns_solver->bc.left.type == BCType::DIRICHLET || ns_solver->bc.left.type == BCType::FREE_SLIP)) ||
-                             (ns_solver->is_u_face_in_obstacle(i, j) && ns_solver->get_u_obstacle_perm(i, j) <= 1.0e-12);
-            if (!is_wall_W) {
-                int dof_u = (j - 1) * u_nx + (i - 1);
-                double Du = u_aP[dof_u];
-                if (std::abs(Du) < 1.0e-30) Du = 1.0;
-                a_W[c] = (dy * dy) / Du;
-            }
-
-            // Face Est (u_i+1, j)
-            bool is_wall_E = (i == nx && ns_solver->mesh.is_boundary_right &&
-                              (ns_solver->bc.right.type == BCType::DIRICHLET || ns_solver->bc.right.type == BCType::FREE_SLIP)) ||
-                             (ns_solver->is_u_face_in_obstacle(i + 1, j) && ns_solver->get_u_obstacle_perm(i + 1, j) <= 1.0e-12);
-            if (!is_wall_E) {
-                int dof_u = (i < nx) ? ((j - 1) * u_nx + i) : ((j - 1) * u_nx + 0);
-                double Du = u_aP[dof_u];
-                if (std::abs(Du) < 1.0e-30) Du = 1.0;
-                a_E[c] = (dy * dy) / Du;
-            }
-
-            // Face Sud (v_i, j)
-            bool is_wall_S = (j == 1 && ns_solver->mesh.is_boundary_bottom &&
-                              (ns_solver->bc.bottom.type == BCType::DIRICHLET || ns_solver->bc.bottom.type == BCType::FREE_SLIP)) ||
-                             (ns_solver->is_v_face_in_obstacle(i, j) && ns_solver->get_v_obstacle_perm(i, j) <= 1.0e-12);
-            if (!is_wall_S) {
-                int dof_v = (j - 1) * nx + (i - 1);
-                double Dv = v_aP[dof_v];
-                if (std::abs(Dv) < 1.0e-30) Dv = 1.0;
-                a_S[c] = (dx * dx) / Dv;
-            }
-
-            // Face Nord (v_i, j+1)
-            bool is_wall_N = (j == ny && ns_solver->mesh.is_boundary_top &&
-                              (ns_solver->bc.top.type == BCType::DIRICHLET || ns_solver->bc.top.type == BCType::FREE_SLIP)) ||
-                             (ns_solver->is_v_face_in_obstacle(i, j + 1) && ns_solver->get_v_obstacle_perm(i, j + 1) <= 1.0e-12);
-            if (!is_wall_N) {
-                int dof_v = (j < ny) ? (j * nx + (i - 1)) : (i - 1);
-                double Dv = v_aP[dof_v];
-                if (std::abs(Dv) < 1.0e-30) Dv = 1.0;
-                a_N[c] = (dx * dx) / Dv;
-            }
-
-            int c_global = ns_solver->mesh.cell_idx(i, j);
-            double chi = (fields.chi_T.size() > (size_t)c_global) ? fields.chi_T[c_global] : 0.0;
-            double diag_comp = (ns_solver->compressible ? (chi / dt) : 0.0) * dvol;
-            a_P[c] = a_W[c] + a_E[c] + a_S[c] + a_N[c] + diag_comp + 1.0e-12 * dvol;
-        }
-    }
+    const size_t p_halo_sz = static_cast<size_t>(mesh.nx_ghost * mesh.ny_ghost);
+    const size_t u_halo_sz = static_cast<size_t>((mesh.nx_ghost + 1) * mesh.ny_ghost);
+    const size_t v_halo_sz = static_cast<size_t>(mesh.nx_ghost * (mesh.ny_ghost + 1));
+    if (rp_halo.size() != p_halo_sz) rp_halo.assign(p_halo_sz, 0.0);
+    if (ru_halo.size() != u_halo_sz) ru_halo.assign(u_halo_sz, 0.0);
+    if (rv_halo.size() != v_halo_sz) rv_halo.assign(v_halo_sz, 0.0);
 }
 
 void BlockTriangularPreconditioner::apply(const std::vector<double>& z, std::vector<double>& r) const {
     if (!ns_solver) return;
 
-    int nu = ns_solver->n_owned_u;
-    int nv = ns_solver->n_owned_v;
-    int np = ns_solver->n_owned_p;
-    int n  = ns_solver->n_owned_total;
+    const Mesh2D& mesh = ns_solver->mesh;
+    const int nu = ns_solver->n_owned_u;
+    const int nv = ns_solver->n_owned_v;
+    const int np = ns_solver->n_owned_p;
+    const int n  = ns_solver->n_owned_total;
 
     r.assign(n, 0.0);
 
     if (ns_solver->is_monolithic()) {
-        int u_nx = nx + (ns_solver->mesh.is_boundary_right ? 1 : 0);
-        int v_ny = ny + (ns_solver->mesh.is_boundary_top ? 1 : 0);
-        int p_offset = nu + nv;
+        const int p_offset = nu + nv;
 
-        // 1. 8 balayages de Gauss-Seidel symétrique sur le complément de Schur S
-        r_p.assign(np, 0.0);
-        for (int sweep = 0; sweep < 8; ++sweep) {
-            // Forward
+        // 1. Résolution parallèle MPI du complément de Schur S * r_p = z_p via SchurLaplace (CSR)
+        solve_csr_block_ssor(
+            ns_solver->SchurLaplace, mesh, nx, ny,
+            [&](int i, int j) { return mesh.cell_idx(i, j); }, MpiComm::sync_cell_scalar,
+            ns_solver->schur_bnd_W, ns_solver->schur_bnd_E,
+            ns_solver->schur_bnd_S, ns_solver->schur_bnd_N,
+            z, p_offset, r_p, rp_halo, n_schur_sweeps, ssor_omega, true);
+
+        // Élimination GLOBALE du mode constant de pression + synchronisation des halos pour G * r_p
+        if (!ns_solver->compressible) {
+            double local_sum = 0.0;
+            for (int c = 0; c < np; ++c) local_sum += r_p[c];
+            double global_sum_rp = MpiComm::global_sum(mesh, local_sum);
+            double mean_rp = global_sum_rp / static_cast<double>(mesh.nx_global * mesh.ny_global);
             for (int j = 1; j <= ny; ++j) {
                 for (int i = 1; i <= nx; ++i) {
                     int c = (j - 1) * nx + (i - 1);
-                    double val = z[p_offset + c];
-                    if (i > 1) val += a_W[c] * r_p[c - 1];
-                    else if (ns_solver->bc.left.type == BCType::PERIODIC) val += a_W[c] * r_p[(j - 1) * nx + (nx - 1)];
-
-                    if (i < nx) val += a_E[c] * r_p[c + 1];
-                    else if (ns_solver->bc.right.type == BCType::PERIODIC) val += a_E[c] * r_p[(j - 1) * nx];
-
-                    if (j > 1) val += a_S[c] * r_p[c - nx];
-                    else if (ns_solver->bc.bottom.type == BCType::PERIODIC) val += a_S[c] * r_p[(ny - 1) * nx + (i - 1)];
-
-                    if (j < ny) val += a_N[c] * r_p[c + nx];
-                    else if (ns_solver->bc.top.type == BCType::PERIODIC) val += a_N[c] * r_p[i - 1];
-
-                    r_p[c] = val / a_P[c];
-                }
-            }
-            // Backward
-            for (int j = ny; j >= 1; --j) {
-                for (int i = nx; i >= 1; --i) {
-                    int c = (j - 1) * nx + (i - 1);
-                    double val = z[p_offset + c];
-                    if (i > 1) val += a_W[c] * r_p[c - 1];
-                    else if (ns_solver->bc.left.type == BCType::PERIODIC) val += a_W[c] * r_p[(j - 1) * nx + (nx - 1)];
-
-                    if (i < nx) val += a_E[c] * r_p[c + 1];
-                    else if (ns_solver->bc.right.type == BCType::PERIODIC) val += a_E[c] * r_p[(j - 1) * nx];
-
-                    if (j > 1) val += a_S[c] * r_p[c - nx];
-                    else if (ns_solver->bc.bottom.type == BCType::PERIODIC) val += a_S[c] * r_p[(ny - 1) * nx + (i - 1)];
-
-                    if (j < ny) val += a_N[c] * r_p[c + nx];
-                    else if (ns_solver->bc.top.type == BCType::PERIODIC) val += a_N[c] * r_p[i - 1];
-
-                    r_p[c] = val / a_P[c];
+                    r_p[c] -= mean_rp;
+                    rp_halo[mesh.cell_idx(i, j)] = r_p[c];
                 }
             }
         }
-
-        // Élimination du mode constant (noyau de la pression) pour garantir la stabilité monolithique
-        if (!ns_solver->compressible) {
-            double sum_rp = 0.0;
-            for (int c = 0; c < np; ++c) sum_rp += r_p[c];
-            double mean_rp = sum_rp / np;
-            for (int c = 0; c < np; ++c) r_p[c] -= mean_rp;
+        if (mesh.num_procs > 1 || !mesh.is_boundary_left || !mesh.is_boundary_right ||
+            !mesh.is_boundary_bottom || !mesh.is_boundary_top) {
+            MpiComm::sync_cell_scalar(mesh, rp_halo);
         }
 
         // 2. Second membre pour vitesse : rhs_u = z_u - G_u * r_p, rhs_v = z_v - G_v * r_p
@@ -454,15 +339,13 @@ void BlockTriangularPreconditioner::apply(const std::vector<double>& z, std::vec
         for (int j = 1; j <= ny; ++j) {
             for (int i = 1; i <= u_nx; ++i) {
                 int dof = (j - 1) * u_nx + (i - 1);
-                bool is_wall = (i == 1 && ns_solver->mesh.is_boundary_left) ||
-                               (i == u_nx && ns_solver->mesh.is_boundary_right) ||
+                bool is_wall = (i == 1 && mesh.is_boundary_left) ||
+                               (i == u_nx && mesh.is_boundary_right) ||
                                (ns_solver->is_u_face_in_obstacle(i, j) && ns_solver->get_u_obstacle_perm(i, j) <= 1.0e-12);
                 if (is_wall) {
                     rhs_u[dof] = z[dof];
                 } else {
-                    int c_E = (j - 1) * nx + (i - 1);
-                    int c_W = (i > 1) ? ((j - 1) * nx + (i - 2)) : ((ns_solver->bc.left.type == BCType::PERIODIC) ? ((j - 1) * nx + (nx - 1)) : ((j - 1) * nx + (i - 1)));
-                    double grad_p = (r_p[c_E] - r_p[c_W]) * dy;
+                    double grad_p = (rp_halo[mesh.cell_idx(i, j)] - rp_halo[mesh.cell_idx(i - 1, j)]) * dy;
                     rhs_u[dof] = z[dof] - grad_p;
                 }
             }
@@ -472,108 +355,70 @@ void BlockTriangularPreconditioner::apply(const std::vector<double>& z, std::vec
         for (int j = 1; j <= v_ny; ++j) {
             for (int i = 1; i <= nx; ++i) {
                 int dof = (j - 1) * nx + (i - 1);
-                bool is_wall = (j == 1 && ns_solver->mesh.is_boundary_bottom &&
+                bool is_wall = (j == 1 && mesh.is_boundary_bottom &&
                                 (ns_solver->bc.bottom.type == BCType::DIRICHLET || ns_solver->bc.bottom.type == BCType::FREE_SLIP)) ||
-                               (j == v_ny && ns_solver->mesh.is_boundary_top &&
+                               (j == v_ny && mesh.is_boundary_top &&
                                 (ns_solver->bc.top.type == BCType::DIRICHLET || ns_solver->bc.top.type == BCType::FREE_SLIP)) ||
                                (ns_solver->is_v_face_in_obstacle(i, j) && ns_solver->get_v_obstacle_perm(i, j) <= 1.0e-12);
                 if (is_wall) {
                     rhs_v[dof] = z[nu + dof];
                 } else {
-                    int c_N = (j - 1) * nx + (i - 1);
-                    int c_S = (j > 1) ? ((j - 2) * nx + (i - 1)) : ((ns_solver->bc.bottom.type == BCType::PERIODIC) ? ((ny - 1) * nx + (i - 1)) : ((j - 1) * nx + (i - 1)));
-                    double grad_p = (r_p[c_N] - r_p[c_S]) * dx;
+                    double grad_p = (rp_halo[mesh.cell_idx(i, j)] - rp_halo[mesh.cell_idx(i, j - 1)]) * dx;
                     rhs_v[dof] = z[nu + dof] - grad_p;
                 }
             }
         }
 
-        // 3. Résolution de Fu * r_u = rhs_u par 4 balayages de Gauss-Seidel symétrique
-        r_u.assign(nu, 0.0);
-        for (int sweep = 0; sweep < 4; ++sweep) {
-            // Forward
-            for (int j = 1; j <= ny; ++j) {
-                for (int i = 1; i <= u_nx; ++i) {
-                    int dof = (j - 1) * u_nx + (i - 1);
-                    double val = rhs_u[dof];
-                    if (i > 1) val += u_aW[dof] * r_u[dof - 1];
-                    else if (ns_solver->bc.left.type == BCType::PERIODIC) val += u_aW[dof] * r_u[(j - 1) * u_nx + (u_nx - 1)];
-                    if (i < u_nx) val += u_aE[dof] * r_u[dof + 1];
-                    else if (ns_solver->bc.right.type == BCType::PERIODIC) val += u_aE[dof] * r_u[(j - 1) * u_nx];
-                    if (j > 1) val += u_aS[dof] * r_u[dof - u_nx];
-                    if (j < ny) val += u_aN[dof] * r_u[dof + u_nx];
-                    r_u[dof] = val / u_aP[dof];
-                }
-            }
-            // Backward
-            for (int j = ny; j >= 1; --j) {
-                for (int i = u_nx; i >= 1; --i) {
-                    int dof = (j - 1) * u_nx + (i - 1);
-                    double val = rhs_u[dof];
-                    if (i > 1) val += u_aW[dof] * r_u[dof - 1];
-                    else if (ns_solver->bc.left.type == BCType::PERIODIC) val += u_aW[dof] * r_u[(j - 1) * u_nx + (u_nx - 1)];
-                    if (i < u_nx) val += u_aE[dof] * r_u[dof + 1];
-                    else if (ns_solver->bc.right.type == BCType::PERIODIC) val += u_aE[dof] * r_u[(j - 1) * u_nx];
-                    if (j > 1) val += u_aS[dof] * r_u[dof - u_nx];
-                    if (j < ny) val += u_aN[dof] * r_u[dof + u_nx];
-                    r_u[dof] = val / u_aP[dof];
-                }
-            }
-        }
+        // 3. Résolution parallèle MPI de Fu * r_u = rhs_u et Fv * r_v = rhs_v via Fuu / Fvv (CSR)
+        solve_csr_block_ssor(
+            ns_solver->Fuu, mesh, u_nx, ny,
+            [&](int i, int j) { return mesh.u_idx(i, j); }, MpiComm::sync_u,
+            ns_solver->u_bnd_W, ns_solver->u_bnd_E,
+            ns_solver->u_bnd_S, ns_solver->u_bnd_N,
+            rhs_u, 0, r_u, ru_halo, n_sweeps, 1.0);
 
-        // 4. Résolution de Fv * r_v = rhs_v par 4 balayages de Gauss-Seidel symétrique
-        r_v.assign(nv, 0.0);
-        for (int sweep = 0; sweep < 4; ++sweep) {
-            // Forward
-            for (int j = 1; j <= v_ny; ++j) {
-                for (int i = 1; i <= nx; ++i) {
-                    int dof = (j - 1) * nx + (i - 1);
-                    double val = rhs_v[dof];
-                    if (i > 1) val += v_aW[dof] * r_v[dof - 1];
-                    else if (ns_solver->bc.left.type == BCType::PERIODIC) val += v_aW[dof] * r_v[(j - 1) * nx + (nx - 1)];
-                    if (i < nx) val += v_aE[dof] * r_v[dof + 1];
-                    else if (ns_solver->bc.right.type == BCType::PERIODIC) val += v_aE[dof] * r_v[(j - 1) * nx];
-                    if (j > 1) val += v_aS[dof] * r_v[dof - nx];
-                    else if (ns_solver->bc.bottom.type == BCType::PERIODIC) val += v_aS[dof] * r_v[(v_ny - 1) * nx + (i - 1)];
-                    if (j < v_ny) val += v_aN[dof] * r_v[dof + nx];
-                    else if (ns_solver->bc.top.type == BCType::PERIODIC) val += v_aN[dof] * r_v[i - 1];
-                    r_v[dof] = val / v_aP[dof];
-                }
-            }
-            // Backward
-            for (int j = v_ny; j >= 1; --j) {
-                for (int i = nx; i >= 1; --i) {
-                    int dof = (j - 1) * nx + (i - 1);
-                    double val = rhs_v[dof];
-                    if (i > 1) val += v_aW[dof] * r_v[dof - 1];
-                    else if (ns_solver->bc.left.type == BCType::PERIODIC) val += v_aW[dof] * r_v[(j - 1) * nx + (nx - 1)];
-                    if (i < nx) val += v_aE[dof] * r_v[dof + 1];
-                    else if (ns_solver->bc.right.type == BCType::PERIODIC) val += v_aE[dof] * r_v[(j - 1) * nx];
-                    if (j > 1) val += v_aS[dof] * r_v[dof - nx];
-                    else if (ns_solver->bc.bottom.type == BCType::PERIODIC) val += v_aS[dof] * r_v[(v_ny - 1) * nx + (i - 1)];
-                    if (j < v_ny) val += v_aN[dof] * r_v[dof + nx];
-                    else if (ns_solver->bc.top.type == BCType::PERIODIC) val += v_aN[dof] * r_v[i - 1];
-                    r_v[dof] = val / v_aP[dof];
-                }
-            }
-        }
+        solve_csr_block_ssor(
+            ns_solver->Fvv, mesh, nx, v_ny,
+            [&](int i, int j) { return mesh.v_idx(i, j); }, MpiComm::sync_v,
+            ns_solver->v_bnd_W, ns_solver->v_bnd_E,
+            ns_solver->v_bnd_S, ns_solver->v_bnd_N,
+            rhs_v, 0, r_v, rv_halo, n_sweeps, 1.0);
 
-        // 5. Assemblage dans r
+        // 4. Assemblage dans r
         for (int i = 0; i < nu; ++i) r[i] = r_u[i];
         for (int i = 0; i < nv; ++i) r[nu + i] = r_v[i];
         for (int i = 0; i < np; ++i) r[p_offset + i] = r_p[i];
 
     } else {
-        // En mode Lagrangien augmenté (C-AAL + BT-SBP) : préconditionnement diagonal enrichi (visqueux + AL + Brinkman + Newton)
-        for (int i = 0; i < nu; ++i) {
-            double du = (ns_solver->diag_u.size() > (size_t)i && std::abs(ns_solver->diag_u[i]) > 1.0e-15)
-                        ? ns_solver->diag_u[i] : 1.0;
-            r[i] = z[i] / du;
-        }
-        for (int i = 0; i < nv; ++i) {
-            double dv = (ns_solver->diag_v.size() > (size_t)i && std::abs(ns_solver->diag_v[i]) > 1.0e-15)
-                        ? ns_solver->diag_v[i] : 1.0;
-            r[nu + i] = z[nu + i] / dv;
+        // Mode Lagrangien augmenté : préconditionnement parallèle sur Fuu et Fvv (CSR)
+        if (ns_solver->Fuu.nrows == nu && ns_solver->Fvv.nrows == nv) {
+            solve_csr_block_ssor(
+                ns_solver->Fuu, mesh, u_nx, ny,
+                [&](int i, int j) { return mesh.u_idx(i, j); }, MpiComm::sync_u,
+                ns_solver->u_bnd_W, ns_solver->u_bnd_E,
+                ns_solver->u_bnd_S, ns_solver->u_bnd_N,
+                z, 0, r_u, ru_halo, 2, 1.0);
+
+            solve_csr_block_ssor(
+                ns_solver->Fvv, mesh, nx, v_ny,
+                [&](int i, int j) { return mesh.v_idx(i, j); }, MpiComm::sync_v,
+                ns_solver->v_bnd_W, ns_solver->v_bnd_E,
+                ns_solver->v_bnd_S, ns_solver->v_bnd_N,
+                z, nu, r_v, rv_halo, 2, 1.0);
+
+            for (int i = 0; i < nu; ++i) r[i] = r_u[i];
+            for (int i = 0; i < nv; ++i) r[nu + i] = r_v[i];
+        } else {
+            for (int i = 0; i < nu; ++i) {
+                double du = (ns_solver->diag_u.size() > (size_t)i && std::abs(ns_solver->diag_u[i]) > 1.0e-15)
+                            ? ns_solver->diag_u[i] : 1.0;
+                r[i] = z[i] / du;
+            }
+            for (int i = 0; i < nv; ++i) {
+                double dv = (ns_solver->diag_v.size() > (size_t)i && std::abs(ns_solver->diag_v[i]) > 1.0e-15)
+                            ? ns_solver->diag_v[i] : 1.0;
+                r[nu + i] = z[nu + i] / dv;
+            }
         }
     }
 }

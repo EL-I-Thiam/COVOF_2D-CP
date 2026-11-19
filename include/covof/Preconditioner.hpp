@@ -106,26 +106,24 @@ public:
 
     int nx = 0;
     int ny = 0;
+    int u_nx = 0;
+    int v_ny = 0;
     double dx = 0.0;
     double dy = 0.0;
     double dvol = 0.0;
     double r_al = 1000.0;
     int n_sweeps = 4;
-
-    std::vector<double> a_E;
-    std::vector<double> a_W;
-    std::vector<double> a_N;
-    std::vector<double> a_S;
-    std::vector<double> a_P;
-
-    std::vector<double> u_aE, u_aW, u_aN, u_aS, u_aP;
-    std::vector<double> v_aE, v_aW, v_aN, v_aS, v_aP;
+    int n_schur_sweeps = 12;
+    double ssor_omega = 1.25;
 
     mutable std::vector<double> r_p;
+    mutable std::vector<double> rp_halo;
     mutable std::vector<double> rhs_u;
     mutable std::vector<double> rhs_v;
     mutable std::vector<double> r_u;
+    mutable std::vector<double> ru_halo;
     mutable std::vector<double> r_v;
+    mutable std::vector<double> rv_halo;
 
     void init(const NavierStokesSolver* solver) override;
     void update(const FlowFields& fields, double dt) override;

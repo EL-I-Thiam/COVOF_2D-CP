@@ -8,6 +8,27 @@
 #include <filesystem>
 
 namespace covof {
+namespace {
+// Solution analytique exacte de nabla^2(psi) = f_src sur [0,a]x[0,b] avec psi = 0 au bord :
+// partie polynomiale 0.5*f*x*(x-a) + serie simple exponentiellement convergente sans depassement cosh.
+double eval_cas_3_1_exact(double xp, double yp, double a, double b, double f_src) {
+    double poly = 0.5 * f_src * xp * (xp - a);
+    double d = std::min(yp, b - yp);
+    double s_far = b - d;
+    double c0 = (4.0 * f_src * a * a) / (M_PI * M_PI * M_PI);
+    double w = 0.0;
+    for (int k = 0; k < 1000; ++k) {
+        double m = static_cast<double>(2 * k + 1);
+        double lam = m * M_PI / a;
+        double e_d = std::exp(-lam * d);
+        if (e_d < 1.0e-16 && k > 20) break;
+        double ratio = (e_d + std::exp(-lam * s_far)) / (1.0 + std::exp(-lam * b));
+        w += (c0 / (m * m * m)) * std::sin(lam * xp) * ratio;
+    }
+    return poly + w;
+}
+} // namespace
+
 // Déclaration de variable typée
 bool Simulation::init(MPI_Comm comm, const std::string& config_file) {
     // 1. Chargement de la configuration JSON
@@ -716,7 +737,8 @@ void Simulation::export_poiseuille_results(int total_step, double final_time, do
     std::string err_file = config.output.output_dir + "/poiseuille_error.csv";
     std::ofstream eofs(err_file);
     if (eofs.is_open()) {
-        eofs << "nx,ny,dx,dy,iters,err_l1,err_l2,err_linf,err_grad_p,cpu_time\n"
+        eofs << std::scientific << std::setprecision(16)
+             << "nx,ny,dx,dy,iters,err_l1,err_l2,err_linf,err_grad_p,cpu_time\n"
              << nx << "," << ny << "," << dx << "," << dy << ","
              << total_step << "," << err_l1 << "," << err_l2 << "," << max_err_linf << "," << err_grad_p << "," << cpu_time << "\n";
         eofs.close();
@@ -728,7 +750,8 @@ void Simulation::export_poiseuille_results(int total_step, double final_time, do
     std::string uy_file = config.output.output_dir + "/profile_u_y.csv";
     std::ofstream uy_ofs(uy_file);
     if (uy_ofs.is_open()) {
-        uy_ofs << "y,u_mid,u_three_quarter,u_ex,error\n";
+        uy_ofs << std::scientific << std::setprecision(16)
+               << "y,u_mid,u_three_quarter,u_ex,error\n";
         for (int j = 1; j <= ny; ++j) {
             double y = mesh.yc(j);
             double u_m = u_c[(j - 1) * nx + (i_mid - 1)];
@@ -743,7 +766,8 @@ void Simulation::export_poiseuille_results(int total_step, double final_time, do
     std::string px_file = config.output.output_dir + "/profile_p_x.csv";
     std::ofstream px_ofs(px_file);
     if (px_ofs.is_open()) {
-        px_ofs << "x,p_mid,p_ex,error\n";
+        px_ofs << std::scientific << std::setprecision(16)
+               << "x,p_mid,p_ex,error\n";
         for (int i = 1; i <= nx; ++i) {
             double x = mesh.xc(i);
             double p_val = fields.p[mesh.cell_idx(i, j_mid)] - p_out;
@@ -757,7 +781,8 @@ void Simulation::export_poiseuille_results(int total_step, double final_time, do
     std::string s2d_file = config.output.output_dir + "/solution_field_2d.csv";
     std::ofstream s2d_ofs(s2d_file);
     if (s2d_ofs.is_open()) {
-        s2d_ofs << "i,j,x,y,u,v,p,u_ex,p_ex,error_u\n";
+        s2d_ofs << std::scientific << std::setprecision(16)
+                << "i,j,x,y,u,v,p,u_ex,p_ex,error_u\n";
         for (int j = 1; j <= ny; ++j) {
             for (int i = 1; i <= nx; ++i) {
                 int c = (j - 1) * nx + (i - 1);
@@ -777,6 +802,7 @@ void Simulation::export_poiseuille_results(int total_step, double final_time, do
     std::string vtk_file = config.output.output_dir + "/solution_field.vtk";
     std::ofstream vofs(vtk_file);
     if (vofs.is_open()) {
+        vofs << std::scientific << std::setprecision(16);
         vofs << "# vtk DataFile Version 3.0\n"
              << "COVOF 2D Cas 3.7 Poiseuille Solution\n"
              << "ASCII\n"
@@ -900,7 +926,8 @@ void Simulation::export_poiseuille_unsteady_results(int total_step, double final
     std::string err_file = config.output.output_dir + "/poiseuille_unsteady_error.csv";
     std::ofstream eofs(err_file);
     if (eofs.is_open()) {
-        eofs << "nx,ny,dx,dy,dt,t_final,iters,err_l1,err_l2,err_linf,u_max_num,u_max_exact,cpu_time\n"
+        eofs << std::scientific << std::setprecision(16)
+             << "nx,ny,dx,dy,dt,t_final,iters,err_l1,err_l2,err_linf,u_max_num,u_max_exact,cpu_time\n"
              << nx << "," << ny << "," << dx << "," << dy << ","
              << config.dt << "," << t_val << "," << total_step << ","
              << err_l1 << "," << err_l2 << "," << max_err_linf << ","
@@ -913,7 +940,8 @@ void Simulation::export_poiseuille_unsteady_results(int total_step, double final
     std::string uy_file = config.output.output_dir + "/profile_u_y.csv";
     std::ofstream uy_ofs(uy_file);
     if (uy_ofs.is_open()) {
-        uy_ofs << "y,u_num,u_exact,error\n";
+        uy_ofs << std::scientific << std::setprecision(16)
+               << "y,u_num,u_exact,error\n";
         for (int j = 1; j <= ny; ++j) {
             double y = mesh.yc(j);
             double u_m = u_c[(j - 1) * nx + (i_mid - 1)];
@@ -927,7 +955,8 @@ void Simulation::export_poiseuille_unsteady_results(int total_step, double final
     std::string s2d_file = config.output.output_dir + "/solution_field_2d.csv";
     std::ofstream s2d_ofs(s2d_file);
     if (s2d_ofs.is_open()) {
-        s2d_ofs << "i,j,x,y,u,v,p,u_exact,error_u\n";
+        s2d_ofs << std::scientific << std::setprecision(16)
+                << "i,j,x,y,u,v,p,u_exact,error_u\n";
         for (int j = 1; j <= ny; ++j) {
             for (int i = 1; i <= nx; ++i) {
                 int c = (j - 1) * nx + (i - 1);
@@ -945,6 +974,7 @@ void Simulation::export_poiseuille_unsteady_results(int total_step, double final
     std::string vtk_file = config.output.output_dir + "/solution_field.vtk";
     std::ofstream vofs(vtk_file);
     if (vofs.is_open()) {
+        vofs << std::scientific << std::setprecision(16);
         vofs << "# vtk DataFile Version 3.0\n"
              << "COVOF 2D Cas 3.8 Poiseuille Unsteady Solution\n"
              << "ASCII\n"
@@ -1342,23 +1372,7 @@ void Simulation::run_laplacian() {
             // Déclaration de variable typée
             double yp = (j + 1) * dy;
             // Déclaration de variable typée
-            double psi_ex = 0.0;
-            // Boucle d'itération algorithmique
-            for (int k2 = 0; k2 < 60; ++k2) {
-                // Boucle d'itération algorithmique
-                for (int k1 = 0; k1 < 60; ++k1) {
-                    // Déclaration de variable typée
-                    double n1 = 2 * k1 + 1;
-                    // Déclaration de variable typée
-                    double n2 = 2 * k2 + 1;
-                    // Déclaration de variable typée
-                    double num = 16.0 * f_src * std::sin(n1 * M_PI * xp / a) * std::sin(n2 * M_PI * yp / b);
-                    // Déclaration de variable typée
-                    double den = (std::pow(M_PI, 4.0)) * n1 * n2 * (std::pow(n1 / a, 2.0) + std::pow(n2 / b, 2.0));
-                    // Calcul et assignation numérique
-                    psi_ex -= num / den;
-                }
-            }
+            double psi_ex = eval_cas_3_1_exact(xp, yp, a, b, f_src);
             // Déclaration de variable typée
             double diff = std::abs(x[dof_idx(i, j)] - psi_ex);
             // Calcul et assignation numérique
@@ -1389,7 +1403,8 @@ void Simulation::run_laplacian() {
         std::ofstream ofs(err_file);
         // Évaluation de la condition de contrôle
         if (ofs.is_open()) {
-            ofs << "nx,ny,dx,dy,iters,err_l1,err_l2,err_linf\n"
+            ofs << std::scientific << std::setprecision(16)
+                << "nx,ny,dx,dy,iters,err_l1,err_l2,err_linf\n"
                 << nx << "," << ny << "," << dx << "," << dy << ","
                 << iters << "," << err_l1 << "," << err_l2 << "," << err_linf << "\n";
             ofs.close();
@@ -1399,7 +1414,8 @@ void Simulation::run_laplacian() {
         std::string hist_file = config.output.output_dir + "/solver_history.csv";
         std::ofstream hofs(hist_file);
         if (hofs.is_open()) {
-            hofs << "iter,residual\n";
+            hofs << std::scientific << std::setprecision(16)
+                 << "iter,residual\n";
             for (const auto& item : solver_hist) {
                 hofs << item.first << "," << item.second << "\n";
             }
@@ -1427,16 +1443,7 @@ void Simulation::run_laplacian() {
                     double p_num = x[j_int * n_int_x + i_int];
                     psi_num_2d[idx_2d] = p_num;
 
-                    double p_ex = 0.0;
-                    for (int k2 = 0; k2 < 60; ++k2) {
-                        double n2 = 2 * k2 + 1;
-                        for (int k1 = 0; k1 < 60; ++k1) {
-                            double n1 = 2 * k1 + 1;
-                            double num = 16.0 * f_src * std::sin(n1 * M_PI * xp / a) * std::sin(n2 * M_PI * yp / b);
-                            double den = (std::pow(M_PI, 4.0)) * n1 * n2 * (std::pow(n1 / a, 2.0) + std::pow(n2 / b, 2.0));
-                            p_ex -= num / den;
-                        }
-                    }
+                    double p_ex = eval_cas_3_1_exact(xp, yp, a, b, f_src);
                     psi_ex_2d[idx_2d] = p_ex;
                     err_2d[idx_2d] = std::abs(p_num - p_ex);
                 }
@@ -1447,7 +1454,8 @@ void Simulation::run_laplacian() {
         std::string field_csv = config.output.output_dir + "/solution_field_2d.csv";
         std::ofstream fofs(field_csv);
         if (fofs.is_open()) {
-            fofs << "i,j,x,y,psi_num,psi_ex,error_abs\n";
+            fofs << std::scientific << std::setprecision(16)
+                 << "i,j,x,y,psi_num,psi_ex,error_abs\n";
             for (int j = 0; j <= ny; ++j) {
                 double yp = j * dy;
                 for (int i = 0; i <= nx; ++i) {
@@ -1466,7 +1474,8 @@ void Simulation::run_laplacian() {
         std::string prof_x_file = config.output.output_dir + "/profile_x_mid.csv";
         std::ofstream px_ofs(prof_x_file);
         if (px_ofs.is_open()) {
-            px_ofs << "x,y,psi_num,psi_ex,error_abs\n";
+            px_ofs << std::scientific << std::setprecision(16)
+                   << "x,y,psi_num,psi_ex,error_abs\n";
             for (int i = 0; i <= nx; ++i) {
                 double xp = i * dx;
                 int idx_2d = j_mid * (nx + 1) + i;
@@ -1482,7 +1491,8 @@ void Simulation::run_laplacian() {
         std::string prof_y_file = config.output.output_dir + "/profile_y_mid.csv";
         std::ofstream py_ofs(prof_y_file);
         if (py_ofs.is_open()) {
-            py_ofs << "x,y,psi_num,psi_ex,error_abs\n";
+            py_ofs << std::scientific << std::setprecision(16)
+                   << "x,y,psi_num,psi_ex,error_abs\n";
             for (int j = 0; j <= ny; ++j) {
                 double yp = j * dy;
                 int idx_2d = j * (nx + 1) + i_mid;
@@ -1496,6 +1506,7 @@ void Simulation::run_laplacian() {
         std::string vtk_file = config.output.output_dir + "/solution_field.vtk";
         std::ofstream vtk_ofs(vtk_file);
         if (vtk_ofs.is_open()) {
+            vtk_ofs << std::scientific << std::setprecision(16);
             vtk_ofs << "# vtk DataFile Version 3.0\n"
                     << "COVOF 2D Laplacian Solution Cas 3.1\n"
                     << "ASCII\n"
@@ -1888,7 +1899,8 @@ void Simulation::run_laplacian_cas3_2() {
         std::string err_file = config.output.output_dir + "/laplacian_error.csv";
         std::ofstream ofs(err_file);
         if (ofs.is_open()) {
-            ofs << "nx,ny,dx,dy,iters,err_l1,err_l2,err_linf,cpu_time\n"
+            ofs << std::scientific << std::setprecision(16)
+                << "nx,ny,dx,dy,iters,err_l1,err_l2,err_linf,cpu_time\n"
                 << nx << "," << ny << "," << dx << "," << dy << ","
                 << iters << "," << err_l1 << "," << err_l2 << "," << err_linf << "," << cpu_time << "\n";
             ofs.close();
@@ -1897,7 +1909,8 @@ void Simulation::run_laplacian_cas3_2() {
         std::string hist_file = config.output.output_dir + "/solver_history.csv";
         std::ofstream hofs(hist_file);
         if (hofs.is_open()) {
-            hofs << "iter,residual\n";
+            hofs << std::scientific << std::setprecision(16)
+                 << "iter,residual\n";
             for (const auto& item : solver_hist) {
                 hofs << item.first << "," << item.second << "\n";
             }
@@ -1907,7 +1920,8 @@ void Simulation::run_laplacian_cas3_2() {
         std::string sol_file = config.output.output_dir + "/solution_field_2d.csv";
         std::ofstream sofs(sol_file);
         if (sofs.is_open()) {
-            sofs << "i,j,x,y,psi_num,psi_ex,error_abs\n";
+            sofs << std::scientific << std::setprecision(16)
+                 << "i,j,x,y,psi_num,psi_ex,error_abs\n";
             for (int j = 0; j <= ny; ++j) {
                 for (int i = 0; i <= nx; ++i) {
                     int idx = dof_idx(i, j);
@@ -1923,7 +1937,8 @@ void Simulation::run_laplacian_cas3_2() {
         std::string px_file = config.output.output_dir + "/profile_x_mid.csv";
         std::ofstream px_ofs(px_file);
         if (px_ofs.is_open()) {
-            px_ofs << "x,y,psi_num,psi_ex,error_abs\n";
+            px_ofs << std::scientific << std::setprecision(16)
+                   << "x,y,psi_num,psi_ex,error_abs\n";
             for (int i = 0; i <= nx; ++i) {
                 int idx = dof_idx(i, j_mid);
                 px_ofs << i * dx << "," << j_mid * dy << ","
@@ -1936,7 +1951,8 @@ void Simulation::run_laplacian_cas3_2() {
         std::string py_file = config.output.output_dir + "/profile_y_mid.csv";
         std::ofstream py_ofs(py_file);
         if (py_ofs.is_open()) {
-            py_ofs << "x,y,psi_num,psi_ex,error_abs\n";
+            py_ofs << std::scientific << std::setprecision(16)
+                   << "x,y,psi_num,psi_ex,error_abs\n";
             for (int j = 0; j <= ny; ++j) {
                 int idx = dof_idx(i_mid, j);
                 py_ofs << i_mid * dx << "," << j * dy << ","
@@ -1948,6 +1964,7 @@ void Simulation::run_laplacian_cas3_2() {
         std::string vtk_file = config.output.output_dir + "/solution_field.vtk";
         std::ofstream vtk_ofs(vtk_file);
         if (vtk_ofs.is_open()) {
+            vtk_ofs << std::scientific << std::setprecision(16);
             vtk_ofs << "# vtk DataFile Version 3.0\n"
                     << "COVOF 2D Cas 3.2 Neumann Solution\n"
                     << "ASCII\n"
@@ -2175,7 +2192,8 @@ void Simulation::run_vortex_advection() {
         // Évaluation de la condition de contrôle
         if (ofs.is_open()) {
             // Écriture de l'en-tête CSV enrichi avec toutes les métriques et métadonnées d'advection
-            ofs << "nx,ny,dt,T,advection,reconstruction,limiter,err_l1,err_l2,err_linf,mass_init,mass_final,mass_conservation\n"
+            ofs << std::scientific << std::setprecision(16)
+                << "nx,ny,dt,T,advection,reconstruction,limiter,err_l1,err_l2,err_linf,mass_init,mass_final,mass_conservation\n"
                 << nx << "," << ny << "," << dt << "," << T_period << ","
                 << config.vof.advection_method << "," << config.vof.reconstruction_method << "," << config.vof.tvd_limiter << ","
                 << err_l1 << "," << err_l2 << "," << err_linf << ","

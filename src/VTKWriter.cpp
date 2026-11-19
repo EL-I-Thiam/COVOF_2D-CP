@@ -22,6 +22,7 @@ void VTKWriter::init(const Mesh2D& mesh, const std::string& out_dir, const std::
         csv_file.open(csv_path);
         // Évaluation de la condition de contrôle
         if (csv_file.is_open()) {
+            csv_file << std::scientific << std::setprecision(16);
             csv_file << "step,time,dt,center_of_mass_y,rise_velocity,bubble_volume,kinetic_energy,max_u,max_div\n";
         }
     }
@@ -50,6 +51,7 @@ void VTKWriter::write_step(const Mesh2D& mesh, const FlowFields& fields, int ste
 
     // Évaluation de la condition de contrôle
     if (vtr.is_open()) {
+        vtr << std::scientific << std::setprecision(16);
         // Calcul et assignation numérique
         vtr << "<?xml version=\"1.0\"?>\n"
             // Calcul et assignation numérique

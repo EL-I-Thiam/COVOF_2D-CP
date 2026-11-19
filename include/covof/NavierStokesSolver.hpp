@@ -210,10 +210,14 @@ public:
     // Déclaration de variable typée
     int n_owned_total = 0;
 
-    // Matrice bloc locale pour le préconditionnement
+    // Matrice bloc locale pour le préconditionnement (CSR)
     CSRMatrix Fuu;
     CSRMatrix Fvv;
     CSRMatrix SchurLaplace;
+    // Couplages inter-rangs MPI / périodiques aux frontières des sous-domaines
+    std::vector<double> u_bnd_W, u_bnd_E, u_bnd_S, u_bnd_N;
+    std::vector<double> v_bnd_W, v_bnd_E, v_bnd_S, v_bnd_N;
+    std::vector<double> schur_bnd_W, schur_bnd_E, schur_bnd_S, schur_bnd_N;
     // Déclaration de variable typée
     std::vector<double> diag_u;
     // Déclaration de variable typée
@@ -223,6 +227,8 @@ public:
 
     mutable FlowFields tf_scratch;
     mutable std::vector<double> div_cell_scratch;
+    std::vector<double> u_aP_halo_scratch;
+    std::vector<double> v_aP_halo_scratch;
 
     // Calcul et assignation numérique
     NavierStokesSolver() = default;

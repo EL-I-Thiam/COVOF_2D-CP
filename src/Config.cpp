@@ -639,14 +639,35 @@ void Config::print() const {
               // Calcul et assignation numérique
               << " Temps : dt = " << dt << " s, t_final = " << t_final << " s\n"
               // Calcul et assignation numérique
-              << " Solveur : " << solver.type << " | BiCGSTAB(2), tol=" << solver.tol
+              << " Solveur : " << solver.type << " | " << solver.linear_solver
+              << " (" << (solver.use_precond ? solver.precond_type : "NONE") << "), tol=" << solver.tol
               // Calcul et assignation numérique
               << ", max_iter=" << solver.max_iter << ", r_al=" << solver.r_al
               << (solver.adaptative_al ? (" (AAL adaptatif, K=" + std::to_string(solver.k_aal) + ")") : "")
               // Calcul et assignation numérique
-              << ", uzawa_iter=" << solver.uzawa_iter << "\n"
-              // Calcul et assignation numérique
-              << " Sorties : Dossier '" << output.output_dir << "', intervalle VTK=" << output.vtk_interval << "\n"
+              << ", uzawa_iter=" << solver.uzawa_iter << "\n";
+    if (solver.linear_solver == "MINRES") {
+        bool nonsym_op = (mode == "NAVIER_STOKES") &&
+                         (enable_convection || compressible ||
+                          solver.type == "MONOLITHIC" ||
+                          solver.type == "STANDARD_PROJECTION" ||
+                          solver.type == "AAL" || solver.type == "C-AAL");
+        bool nonsym_prec = solver.use_precond &&
+                           (solver.precond_type == "BLOCK_TRIANGULAR" ||
+                            solver.precond_type == "ILU0" ||
+                            solver.precond_type == "SSOR");
+        if (nonsym_op || nonsym_prec) {
+            std::cout << " [AVERTISSEMENT CRITIQUE] Solveur MINRES selectionne avec un "
+                      << (nonsym_op ? "operateur" : "preconditionneur")
+                      << " non symetrique (" << solver.type << " / "
+                      << (solver.use_precond ? solver.precond_type : "NONE")
+                      << ") : convergence non garantie, preferez BICGSTAB2 ou GMRES.\n";
+            std::cerr << "[AVERTISSEMENT CRITIQUE] MINRES avec operateur/preconditionneur non symetrique ("
+                      << solver.type << " / " << (solver.use_precond ? solver.precond_type : "NONE")
+                      << ") : risque de saturation ou de divergence.\n";
+        }
+    }
+    std::cout << " Sorties : Dossier '" << output.output_dir << "', intervalle VTK=" << output.vtk_interval << "\n"
               // Calcul et assignation numérique
               << "========================================================\n";
 }

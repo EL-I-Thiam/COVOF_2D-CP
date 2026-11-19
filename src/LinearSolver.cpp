@@ -314,6 +314,7 @@ int BiCGSTABSolver::solve(const NavierStokesSolver& op, const PreconditionerBase
         rho_old = rho;
         // Déclaration de variable typée
         double r_norm = MpiComm::global_norm2(mesh, r, n);
+        if (!std::isfinite(r_norm)) break;
         // Évaluation de la condition de contrôle
         if (r_norm / r0_norm < tol || r_norm < 1.0e-13) return iter;
         // Évaluation de la condition de contrôle
@@ -388,12 +389,14 @@ int CGSolver::solve(const NavierStokesSolver& op, const PreconditionerBase& P,
 
         // Déclaration de variable typée
         double r_norm = MpiComm::global_norm2(mesh, r, n);
+        if (!std::isfinite(r_norm)) break;
         // Évaluation de la condition de contrôle
         if (r_norm / r0_norm < tol || r_norm < 1.0e-13) return iter;
 
         apply_P(P, use_precond, r, z);
         // Déclaration de variable typée
         double rz_new = MpiComm::global_dot_product(mesh, r, z, n);
+        if (std::abs(rz_old) < 1.0e-300 || !std::isfinite(rz_new)) break;
         // Déclaration de variable typée
         double beta = rz_new / rz_old;
         // Calcul et assignation numérique
@@ -607,6 +610,7 @@ int MINRESSolver::solve(const NavierStokesSolver& op, const PreconditionerBase& 
     // Déclaration de variable typée
     double beta = 0.0;
 
+    std::vector<double> x_best = x;
     // Boucle d'itération algorithmique
     for (int iter = 1; iter <= max_iter; ++iter) {
         apply_PA(op, P, use_precond, fields_old, dt, v, v_next);
@@ -625,21 +629,38 @@ int MINRESSolver::solve(const NavierStokesSolver& op, const PreconditionerBase& 
         double delta = c * alpha - s * c_old * beta;
         // Déclaration de variable typée
         double gamma = std::sqrt(delta * delta + beta_next * beta_next);
+        if (!std::isfinite(alpha) || !std::isfinite(beta_next) || !std::isfinite(gamma) || gamma < 1.0e-300) {
+            if (mesh.rank == 0) {
+                std::cerr << "[ERREUR MINRES] Rupture/instabilite numerique a l'iteration " << iter
+                          << " (operateur ou preconditionneur non symetrique probable).\n";
+            }
+            x = x_best;
+            return iter;
+        }
         // Déclaration de variable typée
-        double c_next = delta / (gamma + 1.0e-30);
+        double c_next = delta / gamma;
         // Déclaration de variable typée
-        double s_next = beta_next / (gamma + 1.0e-30);
+        double s_next = beta_next / gamma;
 
         // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
         for (int i = 0; i < n; ++i) {
             // Calcul et assignation numérique
-            w[i] = (v[i] - (c * s_old * beta) * w_oold[i] - (s * alpha + c * c_old * beta) * w_old[i]) / (gamma + 1.0e-30);
+            w[i] = (v[i] - (c * s_old * beta) * w_oold[i] - (s * alpha + c * c_old * beta) * w_old[i]) / gamma;
             // Calcul et assignation numérique
             x[i] += (c_next * phi) * w[i];
         }
 
         // Calcul et assignation numérique
         phi = -s_next * phi;
+        if (!std::isfinite(phi) || std::abs(phi) > 1.0e50 * (beta1 + 1.0)) {
+            if (mesh.rank == 0) {
+                std::cerr << "[ERREUR MINRES] Divergence/NaN detectee a l'iteration " << iter
+                          << " (restauration du dernier itere borne ; preferez BICGSTAB2 ou GMRES).\n";
+            }
+            x = x_best;
+            return iter;
+        }
+        x_best = x;
         // Évaluation de la condition de contrôle
         if (std::abs(phi) / beta1 < tol || std::abs(phi) < 1.0e-13) return iter;
 
@@ -649,8 +670,9 @@ int MINRESSolver::solve(const NavierStokesSolver& op, const PreconditionerBase& 
         w_old = w;
         // Calcul et assignation numérique
         v_old = v;
+        if (beta_next < 1.0e-300) return iter;
         // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
-        for (int i = 0; i < n; ++i) v[i] = v_next[i] / (beta_next + 1.0e-30);
+        for (int i = 0; i < n; ++i) v[i] = v_next[i] / beta_next;
         // Calcul et assignation numérique
         beta = beta_next;
         // Calcul et assignation numérique
@@ -683,14 +705,21 @@ int DirectSolver::solve(const NavierStokesSolver& op, const PreconditionerBase& 
                          (!op.compressible) && (!op.enable_energy) &&
                          (op.viscosity_model == "CONSTANT");
 
-    bool needs_factor = (!can_use_cache || !is_factored || cached_n != n || std::abs(cached_dt - dt) > 1.0e-14);
+    if (op.mesh.num_procs > 1 && op.mesh.rank == 0) {
+        static bool warned_mpi = false;
+        if (!warned_mpi) {
+            std::cerr << "[AVERTISSEMENT] DirectSolver assemble uniquement les DDL locaux par rang (MPI non distribue).\n";
+            warned_mpi = true;
+        }
+    }
 
-    if (needs_factor) {
-        // 1. Assemblage complet de la matrice du système linéaire A par colonnes
+    bool needs_factor = (!can_use_cache || !is_factored || cached_n != n || std::abs(cached_dt - dt) > 1.0e-14);
+    bool lapack_factored = (!needs_factor && is_factored);
+
+    auto assemble_dense_matrix = [&]() {
         A_fact.assign(static_cast<size_t>(n) * n, 0.0);
         std::vector<double> e(n, 0.0);
         std::vector<double> col(n, 0.0);
-
         for (int j = 0; j < n; ++j) {
             e[j] = 1.0;
             op.apply_system_matrix(fields_old, dt, e, col);
@@ -699,8 +728,13 @@ int DirectSolver::solve(const NavierStokesSolver& op, const PreconditionerBase& 
                 A_fact[static_cast<size_t>(j) * n + i] = col[i]; // Stockage column-major pour LAPACK
             }
         }
+    };
 
+    if (needs_factor) {
+        // 1. Assemblage complet de la matrice du système linéaire A par colonnes
+        assemble_dense_matrix();
         ipiv_cached.assign(n, 0);
+        is_factored = false;
 
 #ifdef __APPLE__
         int info = 0;
@@ -708,9 +742,12 @@ int DirectSolver::solve(const NavierStokesSolver& op, const PreconditionerBase& 
         if (info == 0) {
             cached_n = n;
             cached_dt = dt;
+            lapack_factored = true;
             is_factored = can_use_cache;
         } else {
-            std::cerr << "AVERTISSEMENT: dgetrf_ a echoue avec code " << info << std::endl;
+            std::cerr << "AVERTISSEMENT: dgetrf_ a echoue avec code " << info
+                      << " (repli LU avec re-assemblage)\n";
+            assemble_dense_matrix();
         }
 #endif
     }
@@ -718,7 +755,7 @@ int DirectSolver::solve(const NavierStokesSolver& op, const PreconditionerBase& 
     x = b;
 
 #ifdef __APPLE__
-    if (is_factored) {
+    if (lapack_factored) {
         char trans = 'N';
         int nrhs = 1;
         int lda = n;
@@ -728,6 +765,7 @@ int DirectSolver::solve(const NavierStokesSolver& op, const PreconditionerBase& 
         if (info == 0) {
             return 1;
         }
+        assemble_dense_matrix();
     }
 #endif
 

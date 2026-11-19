@@ -52,6 +52,20 @@ public:
     void matvec(const std::vector<double>& x, std::vector<double>& y) const;
 
     /**
+     * @brief Somme des contributions hors-diagonales de la ligne row : sum_{j != row} A_{row, j} * x_j
+     */
+    inline double offdiag_dot(int row, const std::vector<double>& x) const {
+        double sum = 0.0;
+        for (int k = row_ptr[row]; k < row_ptr[row + 1]; ++k) {
+            int col = col_idx[k];
+            if (col != row) {
+                sum += values[k] * x[col];
+            }
+        }
+        return sum;
+    }
+
+    /**
      * @brief Résolution approchée par itérations de Jacobi : x = D^{-1} b
      */
     void solve_jacobi(const std::vector<double>& b, std::vector<double>& x, int num_iters = 5) const;

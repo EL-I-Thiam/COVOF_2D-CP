@@ -3,10 +3,109 @@
 #include "covof/LinearSolver.hpp"
 #include "covof/Preconditioner.hpp"
 #include "covof/EOS.hpp"
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <iostream>
 
 namespace covof {
+namespace {
+    inline int parse_conv_scheme_id(const std::string& scheme) {
+        std::string s = scheme;
+        std::transform(s.begin(), s.end(), s.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        if (s == "CENTERED" || s == "CENTRAL") return 0;
+        if (s == "TVD_SUPERBEE" || s == "SUPERBEE" || s == "TVD") return 2;
+        return 1; // UPWIND (defaut)
+    }
+
+    inline double superbee_psi(double r) {
+        return std::max({0.0, std::min(2.0 * r, 1.0), std::min(r, 2.0)});
+    }
+
+    inline double conv_face_flux(int scheme_id, double flux,
+                                 double phi_L, double phi_R,
+                                 double q_LL, double q_L, double q_R, double q_RR,
+                                 bool has_LL, bool has_RR) {
+        if (scheme_id == 0) {
+            return 0.5 * flux * (phi_L + phi_R);
+        }
+        if (scheme_id == 1) {
+            return (flux >= 0.0) ? (flux * phi_L) : (flux * phi_R);
+        }
+        // TVD_SUPERBEE (linéarisé sur la vitesse de référence gelée)
+        double dq = q_R - q_L;
+        if (flux >= 0.0) {
+            double psi = 0.0;
+            if (has_LL && std::abs(dq) > 1.0e-14) {
+                psi = superbee_psi((q_L - q_LL) / dq);
+            }
+            return flux * (phi_L + 0.5 * psi * (phi_R - phi_L));
+        } else {
+            double psi = 0.0;
+            if (has_RR && std::abs(dq) > 1.0e-14) {
+                psi = superbee_psi((q_RR - q_R) / dq);
+            }
+            return flux * (phi_R + 0.5 * psi * (phi_L - phi_R));
+        }
+    }
+
+    inline void compute_u_conv_fluxes(const Mesh2D& mesh, const FlowFields& fields,
+                                      bool is_ab2, const std::vector<double>& u_ref,
+                                      const std::vector<double>& v_ref,
+                                      int i, int j, double dx, double dy,
+                                      double& F_E, double& F_W, double& F_N, double& F_S) {
+        double u_n   = u_ref[mesh.u_idx(i, j)];
+        double u_n_E = u_ref[mesh.u_idx(i + 1, j)];
+        double u_n_W = u_ref[mesh.u_idx(i - 1, j)];
+        double v_n_N = 0.5 * (v_ref[mesh.v_idx(i - 1, j + 1)] + v_ref[mesh.v_idx(i, j + 1)]);
+        double v_n_S = 0.5 * (v_ref[mesh.v_idx(i - 1, j)] + v_ref[mesh.v_idx(i, j)]);
+
+        if (is_ab2 && fields.has_nm1 && !fields.u_nm1.empty() && !fields.v_nm1.empty()) {
+            u_n   = 2.0 * u_n   - fields.u_nm1[mesh.u_idx(i, j)];
+            u_n_E = 2.0 * u_n_E - fields.u_nm1[mesh.u_idx(i + 1, j)];
+            u_n_W = 2.0 * u_n_W - fields.u_nm1[mesh.u_idx(i - 1, j)];
+
+            double v_nm1_N = 0.5 * (fields.v_nm1[mesh.v_idx(i - 1, j + 1)] + fields.v_nm1[mesh.v_idx(i, j + 1)]);
+            double v_nm1_S = 0.5 * (fields.v_nm1[mesh.v_idx(i - 1, j)] + fields.v_nm1[mesh.v_idx(i, j)]);
+            v_n_N = 2.0 * v_n_N - v_nm1_N;
+            v_n_S = 2.0 * v_n_S - v_nm1_S;
+        }
+
+        F_E = 0.5 * (u_n + u_n_E) * dy;
+        F_W = 0.5 * (u_n_W + u_n) * dy;
+        F_N = v_n_N * dx;
+        F_S = v_n_S * dx;
+    }
+
+    inline void compute_v_conv_fluxes(const Mesh2D& mesh, const FlowFields& fields,
+                                      bool is_ab2, const std::vector<double>& u_ref,
+                                      const std::vector<double>& v_ref,
+                                      int i, int j, double dx, double dy,
+                                      double& F_E, double& F_W, double& F_N, double& F_S) {
+        double v_n   = v_ref[mesh.v_idx(i, j)];
+        double v_n_N = v_ref[mesh.v_idx(i, j + 1)];
+        double v_n_S = v_ref[mesh.v_idx(i, j - 1)];
+        double u_n_E = 0.5 * (u_ref[mesh.u_idx(i + 1, j - 1)] + u_ref[mesh.u_idx(i + 1, j)]);
+        double u_n_W = 0.5 * (u_ref[mesh.u_idx(i, j - 1)] + u_ref[mesh.u_idx(i, j)]);
+
+        if (is_ab2 && fields.has_nm1 && !fields.u_nm1.empty() && !fields.v_nm1.empty()) {
+            v_n   = 2.0 * v_n   - fields.v_nm1[mesh.v_idx(i, j)];
+            v_n_N = 2.0 * v_n_N - fields.v_nm1[mesh.v_idx(i, j + 1)];
+            v_n_S = 2.0 * v_n_S - fields.v_nm1[mesh.v_idx(i, j - 1)];
+
+            double u_nm1_E = 0.5 * (fields.u_nm1[mesh.u_idx(i + 1, j - 1)] + fields.u_nm1[mesh.u_idx(i + 1, j)]);
+            double u_nm1_W = 0.5 * (fields.u_nm1[mesh.u_idx(i, j - 1)] + fields.u_nm1[mesh.u_idx(i, j)]);
+            u_n_E = 2.0 * u_n_E - u_nm1_E;
+            u_n_W = 2.0 * u_n_W - u_nm1_W;
+        }
+
+        F_E = u_n_E * dy;
+        F_W = u_n_W * dy;
+        F_N = 0.5 * (v_n + v_n_N) * dx;
+        F_S = 0.5 * (v_n_S + v_n) * dx;
+    }
+} // namespace
 void NavierStokesSolver::init(const Mesh2D& m, const Config& cfg) {
     // Calcul et assignation numérique
     mesh = m;
@@ -233,6 +332,7 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
     const bool is_ab2 = (convective_linearization == "ADAMS_BASHFORTH" || convective_linearization == "AB2");
     const bool is_newton = (convective_linearization == "NEWTON");
     const bool has_obs = !obstacles.empty();
+    const int conv_scheme_id = parse_conv_scheme_id(convective_scheme);
     const auto& u_ref = (is_ab2 && !fields_old.u_old.empty()) ? fields_old.u_old : fields_old.u;
     const auto& v_ref = (is_ab2 && !fields_old.v_old.empty()) ? fields_old.v_old : fields_old.v;
 
@@ -294,33 +394,37 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
 
             // Terme convectif semi-implicite F_uu (forme advective non-conservative a densite harmonique)
             if (enable_convection) {
-                double u_n = u_ref[mesh.u_idx(i, j)];
-                double u_n_E = u_ref[mesh.u_idx(i + 1, j)];
-                double u_n_W = u_ref[mesh.u_idx(i - 1, j)];
+                double F_E = 0.0, F_W = 0.0, F_N = 0.0, F_S = 0.0;
+                compute_u_conv_fluxes(mesh, fields_old, is_ab2, u_ref, v_ref, i, j, dx, dy, F_E, F_W, F_N, F_S);
 
-                double v_n_N = 0.5 * (v_ref[mesh.v_idx(i - 1, j + 1)] + v_ref[mesh.v_idx(i, j + 1)]);
-                double v_n_S = 0.5 * (v_ref[mesh.v_idx(i - 1, j)] + v_ref[mesh.v_idx(i, j)]);
+                double u_P = tf.u[mesh.u_idx(i, j)];
+                double u_E = tf.u[mesh.u_idx(i + 1, j)];
+                double u_W = tf.u[mesh.u_idx(i - 1, j)];
+                double u_N = tf.u[mesh.u_idx(i, j + 1)];
+                double u_S = tf.u[mesh.u_idx(i, j - 1)];
 
-                if (is_ab2 && fields_old.has_nm1) {
-                    u_n   = 2.0 * u_n   - fields_old.u_nm1[mesh.u_idx(i, j)];
-                    u_n_E = 2.0 * u_n_E - fields_old.u_nm1[mesh.u_idx(i + 1, j)];
-                    u_n_W = 2.0 * u_n_W - fields_old.u_nm1[mesh.u_idx(i - 1, j)];
+                const auto& u_lim = fields_old.u;
+                double q_P = u_lim[mesh.u_idx(i, j)];
+                double q_E = u_lim[mesh.u_idx(i + 1, j)];
+                double q_W = u_lim[mesh.u_idx(i - 1, j)];
+                double q_N = u_lim[mesh.u_idx(i, j + 1)];
+                double q_S = u_lim[mesh.u_idx(i, j - 1)];
 
-                    double v_nm1_N = 0.5 * (fields_old.v_nm1[mesh.v_idx(i - 1, j + 1)] + fields_old.v_nm1[mesh.v_idx(i, j + 1)]);
-                    double v_nm1_S = 0.5 * (fields_old.v_nm1[mesh.v_idx(i - 1, j)] + fields_old.v_nm1[mesh.v_idx(i, j)]);
-                    v_n_N = 2.0 * v_n_N - v_nm1_N;
-                    v_n_S = 2.0 * v_n_S - v_nm1_S;
-                }
+                bool has_EE = (i + 2 <= mesh.nx_local + 1);
+                bool has_WW = (i - 2 >= 0);
+                bool has_NN = (j + 2 <= mesh.ny_local + 1);
+                bool has_SS = (j - 2 >= 0);
+                double q_EE = has_EE ? u_lim[mesh.u_idx(i + 2, j)] : 0.0;
+                double q_WW = has_WW ? u_lim[mesh.u_idx(i - 2, j)] : 0.0;
+                double q_NN = has_NN ? u_lim[mesh.u_idx(i, j + 2)] : 0.0;
+                double q_SS = has_SS ? u_lim[mesh.u_idx(i, j - 2)] : 0.0;
 
-                double F_E = 0.5 * (u_n + u_n_E) * dy;
-                double F_W = 0.5 * (u_n_W + u_n) * dy;
-                double F_N = v_n_N * dx;
-                double F_S = v_n_S * dx;
+                double flux_E = conv_face_flux(conv_scheme_id, F_E, u_P, u_E, q_W, q_P, q_E, q_EE, true, has_EE);
+                double flux_W = conv_face_flux(conv_scheme_id, F_W, u_W, u_P, q_WW, q_W, q_P, q_E, has_WW, true);
+                double flux_N = conv_face_flux(conv_scheme_id, F_N, u_P, u_N, q_S, q_P, q_N, q_NN, true, has_NN);
+                double flux_S = conv_face_flux(conv_scheme_id, F_S, u_S, u_P, q_SS, q_S, q_P, q_N, has_SS, true);
 
-                val += rho_u * 0.5 * (F_E * (tf.u[mesh.u_idx(i + 1, j)] + tf.u[mesh.u_idx(i, j)]) -
-                                      F_W * (tf.u[mesh.u_idx(i - 1, j)] + tf.u[mesh.u_idx(i, j)]) +
-                                      F_N * (tf.u[mesh.u_idx(i, j + 1)] + tf.u[mesh.u_idx(i, j)]) -
-                                      F_S * (tf.u[mesh.u_idx(i, j - 1)] + tf.u[mesh.u_idx(i, j)]));
+                val += rho_u * (flux_E - flux_W + flux_N - flux_S);
 
                 if (is_newton) {
                     double du_dx = (fields_old.u[mesh.u_idx(i + 1, j)] - fields_old.u[mesh.u_idx(i - 1, j)]) / (2.0 * dx);
@@ -423,33 +527,37 @@ void NavierStokesSolver::apply_system_matrix(const FlowFields& fields_old, doubl
 
             // Terme convectif semi-implicite F_vv (forme advective non-conservative a densite harmonique)
             if (enable_convection) {
-                double v_n = v_ref[mesh.v_idx(i, j)];
-                double v_n_N = v_ref[mesh.v_idx(i, j + 1)];
-                double v_n_S = v_ref[mesh.v_idx(i, j - 1)];
+                double F_E = 0.0, F_W = 0.0, F_N = 0.0, F_S = 0.0;
+                compute_v_conv_fluxes(mesh, fields_old, is_ab2, u_ref, v_ref, i, j, dx, dy, F_E, F_W, F_N, F_S);
 
-                double u_n_E = 0.5 * (u_ref[mesh.u_idx(i + 1, j - 1)] + u_ref[mesh.u_idx(i + 1, j)]);
-                double u_n_W = 0.5 * (u_ref[mesh.u_idx(i, j - 1)] + u_ref[mesh.u_idx(i, j)]);
+                double v_P = tf.v[mesh.v_idx(i, j)];
+                double v_E = tf.v[mesh.v_idx(i + 1, j)];
+                double v_W = tf.v[mesh.v_idx(i - 1, j)];
+                double v_N = tf.v[mesh.v_idx(i, j + 1)];
+                double v_S = tf.v[mesh.v_idx(i, j - 1)];
 
-                if (is_ab2 && fields_old.has_nm1) {
-                    v_n   = 2.0 * v_n   - fields_old.v_nm1[mesh.v_idx(i, j)];
-                    v_n_N = 2.0 * v_n_N - fields_old.v_nm1[mesh.v_idx(i, j + 1)];
-                    v_n_S = 2.0 * v_n_S - fields_old.v_nm1[mesh.v_idx(i, j - 1)];
+                const auto& v_lim = fields_old.v;
+                double q_P = v_lim[mesh.v_idx(i, j)];
+                double q_E = v_lim[mesh.v_idx(i + 1, j)];
+                double q_W = v_lim[mesh.v_idx(i - 1, j)];
+                double q_N = v_lim[mesh.v_idx(i, j + 1)];
+                double q_S = v_lim[mesh.v_idx(i, j - 1)];
 
-                    double u_nm1_E = 0.5 * (fields_old.u_nm1[mesh.u_idx(i + 1, j - 1)] + fields_old.u_nm1[mesh.u_idx(i + 1, j)]);
-                    double u_nm1_W = 0.5 * (fields_old.u_nm1[mesh.u_idx(i, j - 1)] + fields_old.u_nm1[mesh.u_idx(i, j)]);
-                    u_n_E = 2.0 * u_n_E - u_nm1_E;
-                    u_n_W = 2.0 * u_n_W - u_nm1_W;
-                }
+                bool has_EE = (i + 2 <= mesh.nx_local + 1);
+                bool has_WW = (i - 2 >= 0);
+                bool has_NN = (j + 2 <= mesh.ny_local + 1);
+                bool has_SS = (j - 2 >= 0);
+                double q_EE = has_EE ? v_lim[mesh.v_idx(i + 2, j)] : 0.0;
+                double q_WW = has_WW ? v_lim[mesh.v_idx(i - 2, j)] : 0.0;
+                double q_NN = has_NN ? v_lim[mesh.v_idx(i, j + 2)] : 0.0;
+                double q_SS = has_SS ? v_lim[mesh.v_idx(i, j - 2)] : 0.0;
 
-                double F_E = u_n_E * dy;
-                double F_W = u_n_W * dy;
-                double F_N = 0.5 * (v_n + v_n_N) * dx;
-                double F_S = 0.5 * (v_n_S + v_n) * dx;
+                double flux_E = conv_face_flux(conv_scheme_id, F_E, v_P, v_E, q_W, q_P, q_E, q_EE, true, has_EE);
+                double flux_W = conv_face_flux(conv_scheme_id, F_W, v_W, v_P, q_WW, q_W, q_P, q_E, has_WW, true);
+                double flux_N = conv_face_flux(conv_scheme_id, F_N, v_P, v_N, q_S, q_P, q_N, q_NN, true, has_NN);
+                double flux_S = conv_face_flux(conv_scheme_id, F_S, v_S, v_P, q_SS, q_S, q_P, q_N, has_SS, true);
 
-                val += rho_v * 0.5 * (F_E * (tf.v[mesh.v_idx(i + 1, j)] + tf.v[mesh.v_idx(i, j)]) -
-                                      F_W * (tf.v[mesh.v_idx(i - 1, j)] + tf.v[mesh.v_idx(i, j)]) +
-                                      F_N * (tf.v[mesh.v_idx(i, j + 1)] + tf.v[mesh.v_idx(i, j)]) -
-                                      F_S * (tf.v[mesh.v_idx(i, j - 1)] + tf.v[mesh.v_idx(i, j)]));
+                val += rho_v * (flux_E - flux_W + flux_N - flux_S);
 
                 if (is_newton) {
                     double dv_dx = (fields_old.v[mesh.v_idx(i + 1, j)] - fields_old.v[mesh.v_idx(i - 1, j)]) / (2.0 * dx);
@@ -1240,105 +1348,427 @@ int NavierStokesSolver::solve_standard_projection(FlowFields& fields, double dt,
 }
 
 void NavierStokesSolver::assemble_preconditioner_blocks(const FlowFields& fields, double dt) {
-    // Déclaration de variable typée
-    double dx = mesh.dx;
-    // Déclaration de variable typée
-    double dy = mesh.dy;
-    // Déclaration de variable typée
-    double dvol = dx * dy;
-    double alpha_time = (is_gear() && fields.has_nm1) ? 1.5 : 1.0;
+    const double dx = mesh.dx;
+    const double dy = mesh.dy;
+    const double dvol = dx * dy;
+    const double dt_safe = (dt > 1.0e-30) ? dt : 1.0;
+    const double alpha_time = (is_gear() && fields.has_nm1) ? 1.5 : 1.0;
+    const bool is_al = is_augmented_lagrangian();
+    const bool is_ab2 = (convective_linearization == "ADAMS_BASHFORTH" || convective_linearization == "AB2");
+    const bool is_newton = is_newton_convection();
+    const auto& u_ref = (is_ab2 && !fields.u_old.empty()) ? fields.u_old : fields.u;
+    const auto& v_ref = (is_ab2 && !fields.v_old.empty()) ? fields.v_old : fields.v;
 
-    // Calcul des diagonales effectives de Fuu et Fvv pour le préconditionnement Jacobi
+    const int nx = mesh.nx_local;
+    const int ny = mesh.ny_local;
+    const int u_nx = nx + (mesh.is_boundary_right ? 1 : 0);
+    const int v_ny = ny + (mesh.is_boundary_top ? 1 : 0);
+
+    // -------------------------------------------------------------------------
+    // 1. Bloc vitesse Fu (faces verticales u) -> CSRMatrix Fuu + diag_u + halos
+    // -------------------------------------------------------------------------
     diag_u.assign(n_owned_u, 1.0);
-    // Déclaration de variable typée
-    int u_nx = mesh.nx_local + (mesh.is_boundary_right ? 1 : 0);
-    // Boucle spatiale sur les cellules locales selon l'axe vertical Y (ordonnées)
-    for (int j = 1; j <= mesh.ny_local; ++j) {
-        // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
+    u_bnd_W.assign(n_owned_u, 0.0);
+    u_bnd_E.assign(n_owned_u, 0.0);
+    u_bnd_S.assign(n_owned_u, 0.0);
+    u_bnd_N.assign(n_owned_u, 0.0);
+
+    const size_t u_halo_sz = static_cast<size_t>((mesh.nx_ghost + 1) * mesh.ny_ghost);
+    if (u_aP_halo_scratch.size() != u_halo_sz) {
+        u_aP_halo_scratch.assign(u_halo_sz, 1.0);
+    } else {
+        std::fill(u_aP_halo_scratch.begin(), u_aP_halo_scratch.end(), 1.0);
+    }
+
+    std::vector<int> rows, cols;
+    std::vector<double> vals;
+    rows.reserve(static_cast<size_t>(n_owned_u) * 5);
+    cols.reserve(static_cast<size_t>(n_owned_u) * 5);
+    vals.reserve(static_cast<size_t>(n_owned_u) * 5);
+
+    auto push_entry = [&](int r, int c, double v) {
+        rows.push_back(r);
+        cols.push_back(c);
+        vals.push_back(v);
+    };
+
+    for (int j = 1; j <= ny; ++j) {
         for (int i = 1; i <= u_nx; ++i) {
-            // Déclaration de variable typée
             int dof = (j - 1) * u_nx + (i - 1);
-            // Déclaration de variable typée
             double rho_u = fields.rho_u[mesh.u_idx(i, j)];
-            // Déclaration de variable typée
+            double Du = (alpha_time * rho_u / dt_safe) * dvol;
+            if (Du <= 1.0e-30) Du = 1.0;
+
             bool is_solid_obs = is_u_face_in_obstacle(i, j) && (get_u_obstacle_perm(i, j) <= 1.0e-12);
-            bool is_wall = (i == 1 && mesh.is_boundary_left) ||
-                           (i == u_nx && mesh.is_boundary_right) ||
-                           is_solid_obs;
-            // Évaluation de la condition de contrôle
-            if (is_wall) {
-                // Calcul et assignation numérique
-                diag_u[dof] = (alpha_time * rho_u / dt) * dvol;
+            if (i == 1 && mesh.is_boundary_left) {
+                diag_u[dof] = Du;
+                u_aP_halo_scratch[mesh.u_idx(i, j)] = Du;
+                push_entry(dof, dof, Du);
+                if (bc.left.type == BCType::NEUMANN && u_nx >= 2) {
+                    push_entry(dof, dof + 1, -Du);
+                }
                 continue;
             }
-            // Déclaration de variable typée
-            double mu_c = fields.mu[mesh.cell_idx(i, j)];
-            double r_E  = (adaptative_al && !fields.r_aal.empty()) ? fields.r_aal[mesh.cell_idx(i, j)]     : r_al;
-            double r_W  = (adaptative_al && !fields.r_aal.empty()) ? fields.r_aal[mesh.cell_idx(i - 1, j)] : r_al;
-            double al_u = is_augmented_lagrangian() ? (r_E + r_W) * (dy / dx) : 0.0;
-            double d = (alpha_time * rho_u / dt) * dvol + 4.0 * mu_c * (dy / dx) + 2.0 * mu_c * (dx / dy) + al_u;
+            if (i == u_nx && mesh.is_boundary_right) {
+                diag_u[dof] = Du;
+                u_aP_halo_scratch[mesh.u_idx(i, j)] = Du;
+                push_entry(dof, dof, Du);
+                if (bc.right.type == BCType::NEUMANN && u_nx >= 2) {
+                    push_entry(dof, dof - 1, -Du);
+                }
+                continue;
+            }
+            if (is_solid_obs) {
+                diag_u[dof] = Du;
+                u_aP_halo_scratch[mesh.u_idx(i, j)] = Du;
+                push_entry(dof, dof, Du);
+                continue;
+            }
+
+            // Viscosite d'elongation (cellules) et de cisaillement harmonique (noeuds)
+            double cE = 2.0 * fields.mu[mesh.cell_idx(i, j)]     * (dy / dx);
+            double cW = 2.0 * fields.mu[mesh.cell_idx(i - 1, j)] * (dy / dx);
+            double cN_raw = fields.mu_node[mesh.node_idx(i, j + 1)] * (dx / dy);
+            double cS_raw = fields.mu_node[mesh.node_idx(i, j)]     * (dx / dy);
+
+            double cN_visc = cN_raw;
+            double cS_visc = cS_raw;
+            double diag_wall_y = 0.0;
+            double cN_extra = 0.0;
+            double cS_extra = 0.0;
+
+            if (j == 1 && mesh.is_boundary_bottom) {
+                if (bc.bottom.type == BCType::DIRICHLET) {
+                    if (ny >= 2) {
+                        diag_wall_y += 3.0 * cS_raw;
+                        cN_extra    += cS_raw / 3.0;
+                    } else {
+                        diag_wall_y += 2.0 * cS_raw;
+                    }
+                }
+                cS_visc = 0.0;
+            }
+            if (j == ny && mesh.is_boundary_top) {
+                if (bc.top.type == BCType::DIRICHLET) {
+                    if (ny >= 2) {
+                        diag_wall_y += 3.0 * cN_raw;
+                        cS_extra    += cN_raw / 3.0;
+                    } else {
+                        diag_wall_y += 2.0 * cN_raw;
+                    }
+                }
+                cN_visc = 0.0;
+            }
+
+            // Enveloppe M-matrice de la convection (stabilite SSOR/GS quel que soit Pe)
+            double conv_diag = 0.0, conv_W = 0.0, conv_E = 0.0, conv_S = 0.0, conv_N = 0.0;
+            if (enable_convection) {
+                double F_E = 0.0, F_W = 0.0, F_N = 0.0, F_S = 0.0;
+                compute_u_conv_fluxes(mesh, fields, is_ab2, u_ref, v_ref, i, j, dx, dy, F_E, F_W, F_N, F_S);
+                conv_diag = rho_u * (std::max(F_E, 0.0) + std::max(-F_W, 0.0) +
+                                     std::max(F_N, 0.0) + std::max(-F_S, 0.0));
+                conv_E = rho_u * std::max(-F_E, 0.0);
+                conv_W = rho_u * std::max(F_W, 0.0);
+                conv_N = (j == ny && mesh.is_boundary_top)    ? 0.0 : rho_u * std::max(-F_N, 0.0);
+                conv_S = (j == 1  && mesh.is_boundary_bottom) ? 0.0 : rho_u * std::max(F_S, 0.0);
+            }
+
+            double al_E = 0.0, al_W = 0.0;
+            if (is_al) {
+                double r_E = (adaptative_al && !fields.r_aal.empty()) ? fields.r_aal[mesh.cell_idx(i, j)]     : r_al;
+                double r_W = (adaptative_al && !fields.r_aal.empty()) ? fields.r_aal[mesh.cell_idx(i - 1, j)] : r_al;
+                al_E = r_E * (dy / dx);
+                al_W = r_W * (dy / dx);
+            }
+
+            double brink = 0.0;
             if (is_u_face_in_obstacle(i, j)) {
                 double perm = get_u_obstacle_perm(i, j);
                 if (perm > 1.0e-12) {
                     double mu_u = 0.5 * (fields.mu[mesh.cell_idx(i - 1, j)] + fields.mu[mesh.cell_idx(i, j)]);
-                    d += (mu_u / perm) * dvol;
+                    brink = (mu_u / perm) * dvol;
                 }
             }
-            if (is_newton_convection()) {
+
+            double newt = 0.0;
+            if (enable_convection && is_newton) {
                 double du_dx = (fields.u[mesh.u_idx(i + 1, j)] - fields.u[mesh.u_idx(i - 1, j)]) / (2.0 * dx);
-                d += rho_u * std::max(0.0, du_dx) * dvol;
+                newt = rho_u * std::max(0.0, du_dx) * dvol;
             }
-            diag_u[dof] = (d > 1.0e-15) ? d : 1.0;
+
+            double off_W = cW + conv_W + al_W;
+            double off_E = cE + conv_E + al_E;
+            double off_S = cS_visc + conv_S + cS_extra;
+            double off_N = cN_visc + conv_N + cN_extra;
+
+            double aP = Du + diag_wall_y + conv_diag + brink + newt +
+                        cW + cE + cS_visc + cN_visc + al_W + al_E;
+            if (aP <= 1.0e-15) aP = 1.0;
+
+            diag_u[dof] = aP;
+            u_aP_halo_scratch[mesh.u_idx(i, j)] = aP;
+
+            push_entry(dof, dof, aP);
+            if (off_W != 0.0) {
+                if (i > 1) push_entry(dof, dof - 1, -off_W);
+                else if (!mesh.is_boundary_left) u_bnd_W[dof] = off_W;
+            }
+            if (off_E != 0.0) {
+                if (i < u_nx) push_entry(dof, dof + 1, -off_E);
+                else if (!mesh.is_boundary_right) u_bnd_E[dof] = off_E;
+            }
+            if (off_S != 0.0) {
+                if (j > 1) push_entry(dof, dof - u_nx, -off_S);
+                else if (!mesh.is_boundary_bottom) u_bnd_S[dof] = off_S;
+            }
+            if (off_N != 0.0) {
+                if (j < ny) push_entry(dof, dof + u_nx, -off_N);
+                else if (!mesh.is_boundary_top) u_bnd_N[dof] = off_N;
+            }
         }
     }
+    Fuu.set_from_triplets(n_owned_u, n_owned_u, rows, cols, vals);
+    MpiComm::sync_u(mesh, u_aP_halo_scratch);
 
+    // -------------------------------------------------------------------------
+    // 2. Bloc vitesse Fv (faces horizontales v) -> CSRMatrix Fvv + diag_v + halos
+    // -------------------------------------------------------------------------
     diag_v.assign(n_owned_v, 1.0);
-    // Déclaration de variable typée
-    int v_ny = mesh.ny_local + (mesh.is_boundary_top ? 1 : 0);
-    // Boucle spatiale sur les cellules locales selon l'axe vertical Y (ordonnées)
+    v_bnd_W.assign(n_owned_v, 0.0);
+    v_bnd_E.assign(n_owned_v, 0.0);
+    v_bnd_S.assign(n_owned_v, 0.0);
+    v_bnd_N.assign(n_owned_v, 0.0);
+
+    const size_t v_halo_sz = static_cast<size_t>(mesh.nx_ghost * (mesh.ny_ghost + 1));
+    if (v_aP_halo_scratch.size() != v_halo_sz) {
+        v_aP_halo_scratch.assign(v_halo_sz, 1.0);
+    } else {
+        std::fill(v_aP_halo_scratch.begin(), v_aP_halo_scratch.end(), 1.0);
+    }
+
+    rows.clear();
+    cols.clear();
+    vals.clear();
+    rows.reserve(static_cast<size_t>(n_owned_v) * 5);
+    cols.reserve(static_cast<size_t>(n_owned_v) * 5);
+    vals.reserve(static_cast<size_t>(n_owned_v) * 5);
+
     for (int j = 1; j <= v_ny; ++j) {
-        // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
-        for (int i = 1; i <= mesh.nx_local; ++i) {
-            // Déclaration de variable typée
-            int dof = (j - 1) * mesh.nx_local + (i - 1);
-            // Déclaration de variable typée
+        for (int i = 1; i <= nx; ++i) {
+            int dof = (j - 1) * nx + (i - 1);
             double rho_v = fields.rho_v[mesh.v_idx(i, j)];
-            // Déclaration de variable typée
+            double Dv = (alpha_time * rho_v / dt_safe) * dvol;
+            if (Dv <= 1.0e-30) Dv = 1.0;
+
             bool is_solid_obs = is_v_face_in_obstacle(i, j) && (get_v_obstacle_perm(i, j) <= 1.0e-12);
             bool is_wall = (j == 1 && mesh.is_boundary_bottom && (bc.bottom.type == BCType::DIRICHLET || bc.bottom.type == BCType::FREE_SLIP)) ||
-                           // Calcul et assignation numérique
                            (j == v_ny && mesh.is_boundary_top && (bc.top.type == BCType::DIRICHLET || bc.top.type == BCType::FREE_SLIP)) ||
                            is_solid_obs;
-            // Évaluation de la condition de contrôle
             if (is_wall) {
-                // Calcul et assignation numérique
-                diag_v[dof] = (alpha_time * rho_v / dt) * dvol;
+                diag_v[dof] = Dv;
+                v_aP_halo_scratch[mesh.v_idx(i, j)] = Dv;
+                push_entry(dof, dof, Dv);
                 continue;
             }
-            // Déclaration de variable typée
-            double mu_c = fields.mu[mesh.cell_idx(i, j)];
-            double r_N  = (adaptative_al && !fields.r_aal.empty()) ? fields.r_aal[mesh.cell_idx(i, j)]     : r_al;
-            double r_S  = (adaptative_al && !fields.r_aal.empty()) ? fields.r_aal[mesh.cell_idx(i, j - 1)] : r_al;
-            double al_v = is_augmented_lagrangian() ? (r_N + r_S) * (dx / dy) : 0.0;
-            double d = (alpha_time * rho_v / dt) * dvol + 4.0 * mu_c * (dx / dy) + 2.0 * mu_c * (dy / dx) + al_v;
+            if (j == 1 && mesh.is_boundary_bottom && bc.bottom.type == BCType::NEUMANN && v_ny >= 2) {
+                diag_v[dof] = Dv;
+                v_aP_halo_scratch[mesh.v_idx(i, j)] = Dv;
+                push_entry(dof, dof, Dv);
+                push_entry(dof, dof + nx, -Dv);
+                continue;
+            }
+            if (j == v_ny && mesh.is_boundary_top && bc.top.type == BCType::NEUMANN && v_ny >= 2) {
+                diag_v[dof] = Dv;
+                v_aP_halo_scratch[mesh.v_idx(i, j)] = Dv;
+                push_entry(dof, dof, Dv);
+                push_entry(dof, dof - nx, -Dv);
+                continue;
+            }
+
+            // Viscosite d'elongation (cellules) et de cisaillement harmonique (noeuds)
+            double cN = 2.0 * fields.mu[mesh.cell_idx(i, j)]     * (dx / dy);
+            double cS = 2.0 * fields.mu[mesh.cell_idx(i, j - 1)] * (dx / dy);
+            double cE_raw = fields.mu_node[mesh.node_idx(i + 1, j)] * (dy / dx);
+            double cW_raw = fields.mu_node[mesh.node_idx(i, j)]     * (dy / dx);
+
+            double cE_visc = cE_raw;
+            double cW_visc = cW_raw;
+            double diag_wall_x = 0.0;
+
+            if (i == 1 && mesh.is_boundary_left) {
+                if (bc.left.type == BCType::DIRICHLET) {
+                    diag_wall_x += 2.0 * cW_raw;
+                }
+                cW_visc = 0.0;
+            }
+            if (i == nx && mesh.is_boundary_right) {
+                if (bc.right.type == BCType::DIRICHLET) {
+                    diag_wall_x += 2.0 * cE_raw;
+                }
+                cE_visc = 0.0;
+            }
+
+            double conv_diag = 0.0, conv_W = 0.0, conv_E = 0.0, conv_S = 0.0, conv_N = 0.0;
+            if (enable_convection) {
+                double F_E = 0.0, F_W = 0.0, F_N = 0.0, F_S = 0.0;
+                compute_v_conv_fluxes(mesh, fields, is_ab2, u_ref, v_ref, i, j, dx, dy, F_E, F_W, F_N, F_S);
+                conv_diag = rho_v * (std::max(F_E, 0.0) + std::max(-F_W, 0.0) +
+                                     std::max(F_N, 0.0) + std::max(-F_S, 0.0));
+                conv_E = (i == nx && mesh.is_boundary_right) ? 0.0 : rho_v * std::max(-F_E, 0.0);
+                conv_W = (i == 1  && mesh.is_boundary_left)  ? 0.0 : rho_v * std::max(F_W, 0.0);
+                conv_N = rho_v * std::max(-F_N, 0.0);
+                conv_S = rho_v * std::max(F_S, 0.0);
+            }
+
+            double al_N = 0.0, al_S = 0.0;
+            if (is_al) {
+                double r_N = (adaptative_al && !fields.r_aal.empty()) ? fields.r_aal[mesh.cell_idx(i, j)]     : r_al;
+                double r_S = (adaptative_al && !fields.r_aal.empty()) ? fields.r_aal[mesh.cell_idx(i, j - 1)] : r_al;
+                al_N = r_N * (dx / dy);
+                al_S = r_S * (dx / dy);
+            }
+
+            double brink = 0.0;
             if (is_v_face_in_obstacle(i, j)) {
                 double perm = get_v_obstacle_perm(i, j);
                 if (perm > 1.0e-12) {
                     double mu_v = 0.5 * (fields.mu[mesh.cell_idx(i, j - 1)] + fields.mu[mesh.cell_idx(i, j)]);
-                    d += (mu_v / perm) * dvol;
+                    brink = (mu_v / perm) * dvol;
                 }
             }
-            if (is_newton_convection()) {
+
+            double newt = 0.0;
+            if (enable_convection && is_newton) {
                 double dv_dy = (fields.v[mesh.v_idx(i, j + 1)] - fields.v[mesh.v_idx(i, j - 1)]) / (2.0 * dy);
-                d += rho_v * std::max(0.0, dv_dy) * dvol;
+                newt = rho_v * std::max(0.0, dv_dy) * dvol;
             }
-            diag_v[dof] = (d > 1.0e-15) ? d : 1.0;
+
+            double off_W = cW_visc + conv_W;
+            double off_E = cE_visc + conv_E;
+            double off_S = cS + conv_S + al_S;
+            double off_N = cN + conv_N + al_N;
+
+            double aP = Dv + diag_wall_x + conv_diag + brink + newt +
+                        cW_visc + cE_visc + cS + cN + al_S + al_N;
+            if (aP <= 1.0e-15) aP = 1.0;
+
+            diag_v[dof] = aP;
+            v_aP_halo_scratch[mesh.v_idx(i, j)] = aP;
+
+            push_entry(dof, dof, aP);
+            if (off_W != 0.0) {
+                if (i > 1) push_entry(dof, dof - 1, -off_W);
+                else if (!mesh.is_boundary_left) v_bnd_W[dof] = off_W;
+            }
+            if (off_E != 0.0) {
+                if (i < nx) push_entry(dof, dof + 1, -off_E);
+                else if (!mesh.is_boundary_right) v_bnd_E[dof] = off_E;
+            }
+            if (off_S != 0.0) {
+                if (j > 1) push_entry(dof, dof - nx, -off_S);
+                else if (!mesh.is_boundary_bottom) v_bnd_S[dof] = off_S;
+            }
+            if (off_N != 0.0) {
+                if (j < v_ny) push_entry(dof, dof + nx, -off_N);
+                else if (!mesh.is_boundary_top) v_bnd_N[dof] = off_N;
+            }
         }
     }
+    Fvv.set_from_triplets(n_owned_v, n_owned_v, rows, cols, vals);
+    MpiComm::sync_v(mesh, v_aP_halo_scratch);
 
-    // Évaluation de la condition de contrôle
+    // -------------------------------------------------------------------------
+    // 3. Complément de Schur S = D * diag(F)^{-1} * G + C_p -> SchurLaplace CSR
+    // -------------------------------------------------------------------------
     if (is_monolithic()) {
         diag_p.assign(n_owned_p, 1.0);
+        schur_bnd_W.assign(n_owned_p, 0.0);
+        schur_bnd_E.assign(n_owned_p, 0.0);
+        schur_bnd_S.assign(n_owned_p, 0.0);
+        schur_bnd_N.assign(n_owned_p, 0.0);
+
+        rows.clear();
+        cols.clear();
+        vals.clear();
+        rows.reserve(static_cast<size_t>(n_owned_p) * 5);
+        cols.reserve(static_cast<size_t>(n_owned_p) * 5);
+        vals.reserve(static_cast<size_t>(n_owned_p) * 5);
+
+        for (int j = 1; j <= ny; ++j) {
+            for (int i = 1; i <= nx; ++i) {
+                int c = (j - 1) * nx + (i - 1);
+                double aW = 0.0, aE = 0.0, aS = 0.0, aN = 0.0;
+
+                bool is_wall_W = (i == 1 && mesh.is_boundary_left &&
+                                  (bc.left.type == BCType::DIRICHLET || bc.left.type == BCType::FREE_SLIP)) ||
+                                 (is_u_face_in_obstacle(i, j) && get_u_obstacle_perm(i, j) <= 1.0e-12);
+                if (!is_wall_W) {
+                    double Du = u_aP_halo_scratch[mesh.u_idx(i, j)];
+                    aW = (dy * dy) / std::max(1.0e-30, Du);
+                }
+
+                bool is_wall_E = (i == nx && mesh.is_boundary_right &&
+                                  (bc.right.type == BCType::DIRICHLET || bc.right.type == BCType::FREE_SLIP)) ||
+                                 (is_u_face_in_obstacle(i + 1, j) && get_u_obstacle_perm(i + 1, j) <= 1.0e-12);
+                if (!is_wall_E) {
+                    double Du = u_aP_halo_scratch[mesh.u_idx(i + 1, j)];
+                    aE = (dy * dy) / std::max(1.0e-30, Du);
+                }
+
+                bool is_wall_S = (j == 1 && mesh.is_boundary_bottom &&
+                                  (bc.bottom.type == BCType::DIRICHLET || bc.bottom.type == BCType::FREE_SLIP)) ||
+                                 (is_v_face_in_obstacle(i, j) && get_v_obstacle_perm(i, j) <= 1.0e-12);
+                if (!is_wall_S) {
+                    double Dv = v_aP_halo_scratch[mesh.v_idx(i, j)];
+                    aS = (dx * dx) / std::max(1.0e-30, Dv);
+                }
+
+                bool is_wall_N = (j == ny && mesh.is_boundary_top &&
+                                  (bc.top.type == BCType::DIRICHLET || bc.top.type == BCType::FREE_SLIP)) ||
+                                 (is_v_face_in_obstacle(i, j + 1) && get_v_obstacle_perm(i, j + 1) <= 1.0e-12);
+                if (!is_wall_N) {
+                    double Dv = v_aP_halo_scratch[mesh.v_idx(i, j + 1)];
+                    aN = (dx * dx) / std::max(1.0e-30, Dv);
+                }
+
+                int c_glob = mesh.cell_idx(i, j);
+                double chi = (fields.chi_T.size() > (size_t)c_glob) ? fields.chi_T[c_glob] : 0.0;
+                double diag_comp = (compressible ? (chi / dt_safe) : 0.0) * dvol;
+                double reg_p = (mesh.rank == 0 && i == 1 && j == 1 && !compressible)
+                               ? (1.0e-10 * dvol)
+                               : (1.0e-12 * dvol);
+                double aP = aW + aE + aS + aN + diag_comp + reg_p;
+                if (aP <= 1.0e-30) aP = 1.0e-12 * dvol;
+
+                diag_p[c] = aP;
+                push_entry(c, c, aP);
+
+                if (aW != 0.0) {
+                    if (i > 1) push_entry(c, c - 1, -aW);
+                    else if (!mesh.is_boundary_left) schur_bnd_W[c] = aW;
+                }
+                if (aE != 0.0) {
+                    if (i < nx) push_entry(c, c + 1, -aE);
+                    else if (!mesh.is_boundary_right) schur_bnd_E[c] = aE;
+                }
+                if (aS != 0.0) {
+                    if (j > 1) push_entry(c, c - nx, -aS);
+                    else if (!mesh.is_boundary_bottom) schur_bnd_S[c] = aS;
+                }
+                if (aN != 0.0) {
+                    if (j < ny) push_entry(c, c + nx, -aN);
+                    else if (!mesh.is_boundary_top) schur_bnd_N[c] = aN;
+                }
+            }
+        }
+        SchurLaplace.set_from_triplets(n_owned_p, n_owned_p, rows, cols, vals);
+    } else {
+        SchurLaplace.init(0, 0);
+        diag_p.clear();
+        schur_bnd_W.clear();
+        schur_bnd_E.clear();
+        schur_bnd_S.clear();
+        schur_bnd_N.clear();
     }
 }
 
