@@ -781,18 +781,21 @@ void NavierStokesSolver::assemble_rhs(const FlowFields& fields, double dt, std::
             }
 
             // Contribution de contrainte tangentielle à la paroi pour u (haut / bas)
+            // Cohérente avec l'extrapolation quadratique 3 points dans MpiComm::apply_boundary_conditions
             if (j == mesh.ny_local && mesh.is_boundary_top && bc.top.type == BCType::DIRICHLET) {
                 // Déclaration de variable typée
                 double mu_N = fields.mu_node[mesh.node_idx(i, j + 1)];
+                double coeff_wall = (mesh.ny_local >= 2) ? (8.0 / 3.0) : 2.0;
                 // Calcul et assignation numérique
-                val += mu_N * (2.0 * bc.top.u_val / dy) * dx;
+                val += mu_N * (coeff_wall * bc.top.u_val / dy) * dx;
             }
             // Évaluation de la condition de contrôle
             if (j == 1 && mesh.is_boundary_bottom && bc.bottom.type == BCType::DIRICHLET) {
                 // Déclaration de variable typée
                 double mu_S = fields.mu_node[mesh.node_idx(i, j)];
+                double coeff_wall = (mesh.ny_local >= 2) ? (8.0 / 3.0) : 2.0;
                 // Calcul et assignation numérique
-                val += mu_S * (2.0 * bc.bottom.u_val / dy) * dx;
+                val += mu_S * (coeff_wall * bc.bottom.u_val / dy) * dx;
             }
 
             // Calcul et assignation numérique
