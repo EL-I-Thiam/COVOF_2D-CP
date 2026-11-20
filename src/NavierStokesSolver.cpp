@@ -1818,6 +1818,11 @@ void NavierStokesSolver::solve_energy(FlowFields& fields, double dt) const {
     std::vector<double> rhs(n_cells, 0.0);
     // Déclaration de variable typée
     std::vector<double> T_sol(n_cells, 0.0);
+    // Coefficients de couplage aux interfaces inter-domaines MPI / périodiques
+    std::vector<double> bnd_W(n_cells, 0.0);
+    std::vector<double> bnd_E(n_cells, 0.0);
+    std::vector<double> bnd_S(n_cells, 0.0);
+    std::vector<double> bnd_N(n_cells, 0.0);
 
     // Boucle spatiale sur les cellules locales selon l'axe vertical Y (ordonnées)
     for (int j = 1; j <= ny; ++j) {
@@ -1835,25 +1840,25 @@ void NavierStokesSolver::solve_energy(FlowFields& fields, double dt) const {
             // Flux x-Est
             double u_e = fields.u[mesh.u_idx(i + 1, j)];
             double d_e = k_thermal * dy / dx;
-            double rho_e = (i < nx) ? 0.5 * (rho_loc + fields.rho[mesh.cell_idx(i + 1, j)]) : rho_loc;
+            double rho_e = (i < nx || !mesh.is_boundary_right) ? 0.5 * (rho_loc + fields.rho[mesh.cell_idx(i + 1, j)]) : rho_loc;
             double conv_e = rho_e * Cp * u_e * dy * 0.5;
 
             // Flux x-Ouest
             double u_w = fields.u[mesh.u_idx(i, j)];
             double d_w = k_thermal * dy / dx;
-            double rho_w = (i > 1) ? 0.5 * (fields.rho[mesh.cell_idx(i - 1, j)] + rho_loc) : rho_loc;
+            double rho_w = (i > 1 || !mesh.is_boundary_left) ? 0.5 * (fields.rho[mesh.cell_idx(i - 1, j)] + rho_loc) : rho_loc;
             double conv_w = rho_w * Cp * u_w * dy * 0.5;
 
             // Flux y-Nord
             double v_n = fields.v[mesh.v_idx(i, j + 1)];
             double d_n = k_thermal * dx / dy;
-            double rho_n = (j < ny) ? 0.5 * (rho_loc + fields.rho[mesh.cell_idx(i, j + 1)]) : rho_loc;
+            double rho_n = (j < ny || !mesh.is_boundary_top) ? 0.5 * (rho_loc + fields.rho[mesh.cell_idx(i, j + 1)]) : rho_loc;
             double conv_n = rho_n * Cp * v_n * dx * 0.5;
 
             // Flux y-Sud
             double v_s = fields.v[mesh.v_idx(i, j)];
             double d_s = k_thermal * dx / dy;
-            double rho_s = (j > 1) ? 0.5 * (fields.rho[mesh.cell_idx(i, j - 1)] + rho_loc) : rho_loc;
+            double rho_s = (j > 1 || !mesh.is_boundary_bottom) ? 0.5 * (fields.rho[mesh.cell_idx(i, j - 1)] + rho_loc) : rho_loc;
             double conv_s = rho_s * Cp * v_s * dx * 0.5;
 
             // Voisin Est
@@ -1871,6 +1876,10 @@ void NavierStokesSolver::solve_energy(FlowFields& fields, double dt) const {
                     // Calcul et assignation numérique
                     rhs[c_dof] += 2.0 * d_e * bc.right.T_val;
                 }
+            } else {
+                // Interface inter-domaines MPI ou périodique : couplage implicite via halo
+                a_c += d_e + conv_e;
+                bnd_E[c_dof] = -d_e + conv_e;
             }
 
             // Voisin Ouest
@@ -1888,6 +1897,9 @@ void NavierStokesSolver::solve_energy(FlowFields& fields, double dt) const {
                     // Calcul et assignation numérique
                     rhs[c_dof] += 2.0 * d_w * bc.left.T_val;
                 }
+            } else {
+                a_c += d_w - conv_w;
+                bnd_W[c_dof] = -d_w - conv_w;
             }
 
             // Voisin Nord
@@ -1905,6 +1917,9 @@ void NavierStokesSolver::solve_energy(FlowFields& fields, double dt) const {
                     // Calcul et assignation numérique
                     rhs[c_dof] += 2.0 * d_n * bc.top.T_val;
                 }
+            } else {
+                a_c += d_n + conv_n;
+                bnd_N[c_dof] = -d_n + conv_n;
             }
 
             // Voisin Sud
@@ -1922,6 +1937,9 @@ void NavierStokesSolver::solve_energy(FlowFields& fields, double dt) const {
                     // Calcul et assignation numérique
                     rhs[c_dof] += 2.0 * d_s * bc.bottom.T_val;
                 }
+            } else {
+                a_c += d_s - conv_s;
+                bnd_S[c_dof] = -d_s - conv_s;
             }
 
             rows.push_back(c_dof);
@@ -1933,11 +1951,51 @@ void NavierStokesSolver::solve_energy(FlowFields& fields, double dt) const {
     CSRMatrix A;
     A.set_from_triplets(n_cells, n_cells, rows, cols, vals);
 
+    const bool need_sync = (mesh.num_procs > 1) ||
+                           !mesh.is_boundary_left || !mesh.is_boundary_right ||
+                           !mesh.is_boundary_bottom || !mesh.is_boundary_top;
+    std::vector<double> x_halo(need_sync ? fields.T.size() : 0, 0.0);
+
+    // Produit matrice-vecteur global avec échange des halos MPI aux interfaces internes
+    auto matvec_T = [&](const std::vector<double>& x_vec, std::vector<double>& y_vec) {
+        A.matvec(x_vec, y_vec);
+        if (!need_sync) return;
+        for (int j = 1; j <= ny; ++j) {
+            x_halo[mesh.cell_idx(1, j)]  = x_vec[cell_dof(1, j)];
+            x_halo[mesh.cell_idx(nx, j)] = x_vec[cell_dof(nx, j)];
+        }
+        for (int i = 1; i <= nx; ++i) {
+            x_halo[mesh.cell_idx(i, 1)]  = x_vec[cell_dof(i, 1)];
+            x_halo[mesh.cell_idx(i, ny)] = x_vec[cell_dof(i, ny)];
+        }
+        MpiComm::sync_cell_scalar(mesh, x_halo);
+        for (int j = 1; j <= ny; ++j) {
+            if (!mesh.is_boundary_left) {
+                int c = cell_dof(1, j);
+                y_vec[c] += bnd_W[c] * x_halo[mesh.cell_idx(0, j)];
+            }
+            if (!mesh.is_boundary_right) {
+                int c = cell_dof(nx, j);
+                y_vec[c] += bnd_E[c] * x_halo[mesh.cell_idx(nx + 1, j)];
+            }
+        }
+        for (int i = 1; i <= nx; ++i) {
+            if (!mesh.is_boundary_bottom) {
+                int c = cell_dof(i, 1);
+                y_vec[c] += bnd_S[c] * x_halo[mesh.cell_idx(i, 0)];
+            }
+            if (!mesh.is_boundary_top) {
+                int c = cell_dof(i, ny);
+                y_vec[c] += bnd_N[c] * x_halo[mesh.cell_idx(i, ny + 1)];
+            }
+        }
+    };
+
     // Solveur BiCGSTAB avec préconditionnement Jacobi
     std::vector<double> r = rhs;
     // Déclaration de variable typée
     std::vector<double> Ax(n_cells, 0.0);
-    A.matvec(T_sol, Ax);
+    matvec_T(T_sol, Ax);
     // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
     for (int i = 0; i < n_cells; ++i) r[i] -= Ax[i];
 
@@ -1992,7 +2050,7 @@ void NavierStokesSolver::solve_energy(FlowFields& fields, double dt) const {
 
             // Préconditionnement Jacobi : y = D^{-1} p
             for (int i = 0; i < n_cells; ++i) y_prec[i] = p[i] / A.diag[i];
-            A.matvec(y_prec, v);
+            matvec_T(y_prec, v);
 
             // Déclaration de variable typée
             double r0v = MpiComm::global_dot_product(mesh, r0_hat, v, n_cells);
@@ -2014,7 +2072,7 @@ void NavierStokesSolver::solve_energy(FlowFields& fields, double dt) const {
 
             // Boucle spatiale sur les cellules locales selon l'axe horizontal X (abscisses)
             for (int i = 0; i < n_cells; ++i) z_prec[i] = s[i] / A.diag[i];
-            A.matvec(z_prec, t);
+            matvec_T(z_prec, t);
 
             // Déclaration de variable typée
             double tt = MpiComm::global_dot_product(mesh, t, t, n_cells);
